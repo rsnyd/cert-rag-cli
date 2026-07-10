@@ -1,0 +1,68 @@
+"""Day 12: Ask a question. Retrieve context. Generate an answer."""
+import os
+import sys
+
+from anthropic import Anthropic
+
+from retrievers.vanilla import retrieve
+
+TOP_K = 5
+LLM_MODEL = "claude-sonnet-4-6"
+
+SYSTEM_PROMPT = """You answer questions about the SQF certification documents in
+the provided excerpts, for a food-safety practitioner.
+
+Rules:
+- Answer only from the excerpts. If they do not contain the requirement, say
+  "Not found in the provided documents" and stop. Never supply a requirement
+  from general knowledge or another standard.
+- Cite the clause for every requirement you state, as (source, clause, p.page).
+  If an excerpt has no clause number, cite the source and page.
+- If an answer spans multiple clauses, list each with its own citation.
+- Use plain hyphens, never em dashes."""
+
+
+def assemble_prompt(query: str, chunks: list[dict]) -> str:
+    blocks = []
+    for i, c in enumerate(chunks, 1):
+        header = f"[Excerpt {i} | {c['source']}"
+        if c.get("clause"):
+            header += f" | clause {c['clause']}"
+        if c.get("page") is not None:
+            header += f" | p.{c['page']}"
+        header += "]"
+        blocks.append(f"{header}\n{c['text']}")
+    context = "\n\n---\n\n".join(blocks)
+    return f"""Documentation excerpts:
+
+{context}
+
+---
+
+Question: {query}
+
+Answer using only the excerpts above, citing clauses."""
+
+
+def answer_question(query: str) -> str:
+    chunks = retrieve(query, k=TOP_K)
+    prompt = assemble_prompt(query, chunks)
+    anthropic = Anthropic()
+    response = anthropic.messages.create(
+        model=LLM_MODEL,
+        max_tokens=1024,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text
+
+
+def main():
+    if len(sys.argv) < 2:
+        print('Usage: uv run python ask.py "your question"')
+        sys.exit(1)
+    print(answer_question(" ".join(sys.argv[1:])))
+
+
+if __name__ == "__main__":
+    main()
