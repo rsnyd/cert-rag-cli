@@ -1,4 +1,6 @@
 __pycache__/
-data/source/
-data/raw/
+.env
 .chroma/
+data/
+evals/results/*.csv
+evals/results/*.html
