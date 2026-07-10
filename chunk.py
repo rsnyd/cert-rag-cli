@@ -50,6 +50,9 @@ def sub_split(body: str, size: int):
 def main():
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     written = 0
+    # Same clause number can appear more than once on a page (e.g. audit reports
+    # cite a clause repeatedly), so disambiguate repeated base ids with a counter.
+    seen_ids: dict[str, int] = {}
     with OUT_FILE.open("w", encoding="utf-8") as out:
         for jf in sorted(RAW_DIR.glob("*.jsonl")):
             for line in jf.open(encoding="utf-8"):
@@ -59,8 +62,12 @@ def main():
                         if not piece:
                             continue
                         module = clause.split(".")[0] if clause else None
+                        base_id = f"{Path(rec['source']).stem}__{clause or 'preamble'}__{rec['page']}__{i}"
+                        n = seen_ids.get(base_id, 0)
+                        seen_ids[base_id] = n + 1
+                        chunk_id = base_id if n == 0 else f"{base_id}__{n}"
                         out.write(json.dumps({
-                            "id": f"{Path(rec['source']).stem}__{clause or 'preamble'}__{rec['page']}__{i}",
+                            "id": chunk_id,
                             "text": piece,
                             "source": rec["source"],
                             "doc_type": rec.get("doc_type"),
