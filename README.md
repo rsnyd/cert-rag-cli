@@ -1,53 +1,128 @@
-# cert-rag-cli - Weeks 1-4 walkthroughs (SQF corpus)
+# cert-rag-cli
 
-Reworked from the frozen `drupal-rag-cli` build. Same architecture, new corpus:
-your company's SQF certification documents (PDFs and Word files) instead of the
-Drupal Entity API docs.
+A retrieval-augmented question-answering CLI over SQF food-safety certification
+documents. Ask a plain-English question about your certification program and get
+an answer grounded in the actual policy, SOP, and audit-report text - with a
+clause citation for every requirement, or an explicit "not found" when the
+documents do not cover it.
 
-## What is the same
+This is a compliance/regulatory RAG: the corpus is a controlled body of
+certification documents, and the job is to retrieve the governing requirement and
+answer *only* from it. Getting a requirement subtly wrong in a food-safety
+context is worse than not answering, so the system is built to cite or refuse
+rather than fill gaps from general knowledge.
 
-You already ran this curriculum once, so these walkthroughs do not re-teach the
-mechanics. Anywhere the code is corpus-agnostic, they say "port as-is" and point
-you at the module in the frozen project. That covers the embedder, the vector
-store, the RRF fusion, the Voyage rerank call, the LLM-as-judge scaffolding, and
-the Langfuse client wiring.
+## Corpus
 
-## What is different
+The SQF (Safe Quality Food) certification program for a single facility, as
+`SQF Fundamentals 1.1 (FSC 19)`:
 
-The delta lives almost entirely in Week 1 (ingestion) plus a handful of
-corpus-specific tweaks downstream:
+- **Policies** - food safety policy, reporting-structure statement
+- **SOPs** - the numbered clause procedures (2.x management system, 11.x GMP)
+- **Manual** - the Food Safety Management System PDF
+- **Audit report** - the certification report
 
-- Week 1: PDF/DOCX extraction, running-header removal, OCR fallback for scanned
-  files, and clause-aware chunking with audit-grade metadata. This is a full
-  rewrite of the loader/chunker, not a port.
-- Week 2: SQF golden questions with expected clause references as ground truth,
-  and a judge rubric that adds citation-correctness and no-fabrication
-  dimensions. Tag Langfuse traces `corpus=sqf` so they do not mix with the
-  frozen Drupal traces.
-- Week 3: one tokenizer change so BM25 does not shred clause numbers like
-  `2.4.3`. Optional metadata pre-filtering by module/doc_type.
-- Week 4: same three-way comparison, but the headline metric is clause-citation
-  accuracy, not just answer quality.
+Mixed PDF and Word sources, some scanned. Documents are numbered by SQF clause
+(e.g. `2.4.4`, `11.2.5`), and those clause numbers are the primary key an auditor
+or practitioner reasons in - so they are carried through the whole pipeline as
+metadata.
 
-## A note on the week split
+## How it works
 
-I inferred these week boundaries from what the frozen project contained. If your
-original split placed Langfuse or the eval harness on different weeks, keep your
-split and just lift the corpus-specific sections into the right file. Nothing
-here depends on the exact boundary.
+The pipeline is four scripts, run in order. Each writes an intermediate file the
+next one reads.
 
-## Files
+```
+data/source/*.{pdf,docx}
+      │
+      ▼  ingest.py    extract pages, OCR scanned PDFs, strip running headers/footers
+data/raw/*.jsonl      one {page, text, source, doc_type, edition} record per page
+      │
+      ▼  chunk.py     split on SQF clause headers, carry clause metadata
+data/chunks.jsonl     {id, text, source, module, clause, clause_title, page, ...}
+      │
+      ▼  embed.py     Voyage embeddings -> local Chroma collection "sqf_docs"
+.chroma/
+      │
+      ▼  ask.py       retrieve top-k, assemble cited context, answer with Claude
+answer + clause citations
+```
 
-- `week-01-ingestion-baseline.md` - loaders, cleaning, clause chunking, baseline RAG loop
-- `week-02-evaluation-observability.md` - SQF golden set, judge rubric, Langfuse
-- `week-03-hybrid-retrieval.md` - BM25 + cosine via RRF, clause-safe tokenizer
-- `week-04-reranking-comparison.md` - Voyage rerank, three-way comparison, portfolio framing
+- **`ingest.py`** - PyMuPDF for PDFs, python-docx for Word (tables kept as
+  pipe-joined rows). Scanned PDFs are detected by low text density and run through
+  OCR (`ocrmypdf`). Running headers/footers and bare page numbers are removed by
+  dropping lines that repeat across most pages. `doc_type` and `edition` come from
+  a manifest, since they are not recoverable from the file itself.
+- **`chunk.py`** - splits each document on clause headers (`2.4.3 Internal
+  Audits`) rather than a fixed window, emitting one chunk per clause with its
+  `clause`, `clause_title`, `module`, `source`, and `page`. Over-long clauses are
+  sub-split with small overlap while keeping the clause metadata intact.
+- **`embed.py`** - embeds chunks with Voyage (`voyage-3-lite`) into a persistent
+  Chroma collection using cosine space. Batched and throttled for the free tier.
+- **`ask.py`** - embeds the question, pulls the top-k chunks, formats them as
+  labeled excerpts (`[Excerpt n | source | clause | p.page]`), and asks Claude to
+  answer strictly from those excerpts with a clause citation per requirement.
 
-## Portfolio angle
+## Setup
 
-A compliance/regulatory RAG over food-safety certification documents is a
-sharper portfolio piece than a generic docs bot. It shows domain-constrained
-retrieval, audit-grade citation, and a refusal-to-fabricate posture that maps
-directly to the "applied AI for content and e-commerce systems" specialization
-you are pitching. Keep that framing in mind as you build; Week 4 has notes on
-how to surface it.
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv sync
+```
+
+Set the API keys the pipeline needs:
+
+```bash
+export VOYAGE_API_KEY=...      # embeddings (embed.py, ask.py)
+export ANTHROPIC_API_KEY=...   # answer generation (ask.py)
+```
+
+Put your certification documents in `data/source/` and register each file in the
+`MANIFEST` in `ingest.py` with its `doc_type`.
+
+## Usage
+
+Build the index once:
+
+```bash
+uv run python ingest.py     # data/source/*  -> data/raw/*.jsonl
+uv run python chunk.py      # data/raw/*     -> data/chunks.jsonl
+uv run python embed.py      # data/chunks.jsonl -> .chroma/
+```
+
+Then ask questions:
+
+```bash
+uv run python ask.py "What does our approved supplier program require?"
+uv run python ask.py "How often do we calibrate metal detectors?"
+```
+
+Answers cite clauses as `(source, clause, p.page)`. If the retrieved excerpts do
+not contain the requirement, the answer is `Not found in the provided documents`.
+
+## Notes on choices
+
+**Clause-aware chunking instead of a fixed window.** The obvious default is to
+slice text into fixed-size overlapping windows. That is wrong for this corpus. An
+SQF requirement is defined *by its clause* - "2.4.4 Approved Supplier Program" is
+a single unit of meaning that an auditor cites as a unit. A fixed window would
+routinely cut a requirement in half, or fuse the tail of one clause onto the head
+of the next, so a retrieved chunk would carry a clause number in its metadata that
+does not actually match the text inside it. `chunk.py` splits on clause headers
+instead, so each chunk is one requirement and its `clause`/`clause_title` metadata
+is trustworthy. That metadata is what makes citations verifiable and what enables
+filtering by module or clause. (Clauses longer than ~600 tokens are sub-split as a
+fallback, keeping the clause label attached.)
+
+**A refusal-first system prompt because fabrication is the primary risk.** In a
+general docs bot, a plausible-but-unsourced answer is a minor annoyance. In a
+compliance setting it is the *main* failure mode: an answer that invents a
+requirement, imports one from a different SQF edition, or states the right topic
+with the wrong frequency or threshold can send a facility into a non-conforming
+practice or a failed audit. So the system prompt in `ask.py` is built around
+refusal, not helpfulness: answer only from the provided excerpts, cite the clause
+for every requirement, and if the excerpts do not contain it, say "Not found in
+the provided documents" and stop - never supply a requirement from general
+knowledge or another standard. A confident "not found" is a correct answer here; a
+confident fabrication is the one outcome the system is designed to prevent.
