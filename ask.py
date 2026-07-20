@@ -44,7 +44,13 @@ Question: {query}
 Answer using only the excerpts above, citing clauses."""
 
 
-def answer_question(query: str) -> str:
+def answer_with_sources(query: str) -> dict:
+    """Retrieve, generate, and return the answer alongside the cited sources.
+
+    Returns {"answer": str, "sources": [{source, clause, clause_title, page}]}.
+    The source list is the retrieved chunks (minus their full text), so a caller
+    such as a web UI can render citations without re-running retrieval.
+    """
     chunks = retrieve(query, k=TOP_K)
     prompt = assemble_prompt(query, chunks)
     anthropic = Anthropic()
@@ -54,7 +60,20 @@ def answer_question(query: str) -> str:
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
     )
-    return response.content[0].text
+    sources = [
+        {
+            "source": c["source"],
+            "clause": c.get("clause"),
+            "clause_title": c.get("clause_title"),
+            "page": c.get("page"),
+        }
+        for c in chunks
+    ]
+    return {"answer": response.content[0].text, "sources": sources}
+
+
+def answer_question(query: str) -> str:
+    return answer_with_sources(query)["answer"]
 
 
 def main():
