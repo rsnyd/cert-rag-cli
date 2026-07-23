@@ -11,6 +11,7 @@ from pathlib import Path
 
 import fitz  # pymupdf
 from docx import Document as DocxDocument
+from docx.oxml.ns import qn
 
 SOURCE_DIR = Path("data/source")
 RAW_DIR = Path("data/raw")
@@ -19,9 +20,16 @@ RAW_DIR = Path("data/raw")
 # edition matches YOUR documents: the Spices, Inc. certification report identifies
 # this corpus as SQF Fundamentals Edition 1.1 (FSC 19), not SQF Code Edition 9.
 _ED = "SQF Fundamentals 1.1"
+_ED_CODE10 = "SQF Code 10"   # the full Food Safety Code, a different (newer) standard
 MANIFEST = {
     "Certification Report 1.pdf":                     {"doc_type": "report",  "edition": _ED},
     "_Food Safety Management System.pdf":             {"doc_type": "manual",  "edition": _ED},
+    # The authoritative published standards themselves (not site SOPs). The site is
+    # certified against Fundamentals 1.1; Code Edition 10 is included as reference and
+    # kept on its own edition tag so answers do not conflate the two standards.
+    "sqf-fundamentals-for-manufacturing-intermediate-09262019-ed-1-1-final.pdf":
+                                                      {"doc_type": "standard", "edition": _ED},
+    "SQFI-Food-Safety-Code-Edition-10_FSC-19.pdf":    {"doc_type": "standard", "edition": _ED_CODE10},
     "2.1.1 Food Safety Policy.docx":                  {"doc_type": "policy",  "edition": _ED},
     "Food Safety Reporting Structure Statement.docx": {"doc_type": "policy",  "edition": _ED},
     "2.1.2 Management Responsibility.docx":                          {"doc_type": "sop", "edition": _ED},
@@ -91,12 +99,37 @@ def ensure_text_layer(path: Path) -> Path:
     return out
 
 
+def _element_text(element) -> str:
+    """Text of a w:p/w:tc in document order, INCLUDING tracked insertions.
+
+    python-docx's Paragraph.text only reads <w:r> runs that are direct children
+    of the paragraph, so runs nested in <w:ins> (unaccepted tracked-change
+    insertions) are silently dropped - that is how the entire "Recall vs.
+    Withdrawal Determination" section of 2.6.3 went missing. We walk every <w:t>
+    descendant instead: this picks up <w:ins> text and naturally excludes
+    deletions, since deleted text lives in <w:delText>, not <w:t>.
+    """
+    parts = []
+    for node in element.iter():
+        if node.tag == qn("w:t"):
+            parts.append(node.text or "")
+        elif node.tag == qn("w:tab"):
+            parts.append("\t")
+        elif node.tag in (qn("w:br"), qn("w:cr")):
+            parts.append("\n")
+    return "".join(parts)
+
+
 def load_docx(path: Path) -> list[dict]:
     doc = DocxDocument(path)
-    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    parts = []
+    for p in doc.paragraphs:
+        text = _element_text(p._p).strip()
+        if text:
+            parts.append(text)
     for table in doc.tables:
         for row in table.rows:
-            cells = [c.text.strip() for c in row.cells if c.text.strip()]
+            cells = [t for c in row.cells if (t := _element_text(c._tc).strip())]
             if cells:
                 parts.append(" | ".join(cells))   # keep tables as pipe-joined rows
     return [{"page": None, "text": "\n".join(parts)}]
