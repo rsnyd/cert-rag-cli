@@ -16,7 +16,8 @@ EMBED_MODEL = "voyage-3-lite"   # cheap, good enough for learning; upgrade to vo
 
 # Chroma metadata values must be str/int/float/bool - never None. Drop None keys.
 def _clean_meta(rec: dict) -> dict:
-    fields = ("source", "doc_type", "edition", "module", "clause", "clause_title", "page")
+    fields = ("source", "doc_type", "edition", "module", "clause", "clause_source",
+              "clause_title", "page")
     return {k: rec[k] for k in fields if rec.get(k) is not None}
 
 
