@@ -21,9 +21,9 @@ SCORE_AXES = (
     "citation_correctness", "grounding",
 )
 
-GOLDEN_FILE = Path("evals/golden.jsonl")
-RESULTS_DIR = Path("evals/results")
-RESULTS_DIR.mkdir(exist_ok=True)
+GOLDEN_FILE = Path(__file__).resolve().parent / "golden.jsonl"
+RESULTS_DIR = Path(__file__).resolve().parent / "results"
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Every row carries every column so the CSV is rectangular even though probe
 # rows have no judge scores.
