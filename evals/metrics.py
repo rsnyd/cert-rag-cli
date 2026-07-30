@@ -10,15 +10,48 @@ crisp definition and we want them stable across runs:
 Keeping these out of the judge makes them free, immune to judge drift, and
 usable as the primary signal when comparing retrieval strategies in Week 4.
 """
+import re
 
 # The exact phrase ask.py's system prompt instructs the model to use when the
 # retrieved context does not contain the requirement. Keep the two in sync.
 REFUSAL_MARKER = "not found in the provided documents"
 
+# The model does not always comply verbatim - it paraphrases roughly a fifth of
+# the time ("the provided documents do not specify ...") - so matching only the
+# literal marker scored correct refusals as failures. These are the paraphrases
+# the corpus actually produced, plus the marker itself.
+_DECLINE_RE = re.compile(
+    r"not found in the provided documents"
+    r"|(?:the\s+)?(?:provided\s+)?(?:documents?|excerpts?)\s+do(?:es)?\s+not\s+"
+    r"(?:specify|contain|provide|state|include|address|mention)",
+    re.I,
+)
+
+
+def _opening_sentence(answer: str) -> str:
+    """The answer's first sentence, with markdown emphasis and headings removed.
+
+    Scoping the match to the opening is what separates a refusal from a partial
+    answer. Both contain decline language, but only a refusal *leads* with it:
+    an answer that cites requirements and then notes a gap ("However, the
+    excerpts do not contain ...") is incomplete, not declined, and belongs to
+    Completeness rather than to the refusal metrics.
+
+    Known limitation: a multi-part question answered in part but opening with a
+    decline for the other part reads as a refusal here. Distinguishing those
+    needs semantics, which is exactly the judge drift this module avoids.
+    """
+    for line in answer.strip().splitlines():
+        line = re.sub(r"[*_`]", "", line).strip()
+        if not line or line.startswith("#") or set(line) <= {"-", "="}:
+            continue
+        return re.split(r"(?<=[.!?])\s", line, maxsplit=1)[0]
+    return ""
+
 
 def is_refusal(answer: str) -> bool:
-    """True if the system declined to answer."""
-    return REFUSAL_MARKER in answer.lower()
+    """True if the system's top-line response declined to answer."""
+    return bool(_DECLINE_RE.search(_opening_sentence(answer)))
 
 
 def _segments(clause: str) -> tuple[int, ...] | None:
