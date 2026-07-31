@@ -1,6 +1,6 @@
 """HTTP service exposing the SQF RAG pipeline for the Drupal admin UI.
 
-A thin wrapper around ask.answer_with_sources - it adds no retrieval or
+A thin wrapper around ask.answer_question_with_context - it adds no retrieval or
 generation logic of its own, so the CLI and the service always answer the same
 way. Run locally with:
 
@@ -18,7 +18,7 @@ import os
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from ask import answer_with_sources
+from ask import answer_question_with_context
 
 app = FastAPI(title="cert-rag-cli", version="0.1.0")
 
@@ -50,8 +50,28 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+def _sources(chunks: list[dict]) -> list[Source]:
+    """Retrieved chunks as citable sources, in rank order, deduplicated.
+
+    Deduplicated because a long clause is sub-split into several chunks that
+    share a clause and page, and retrieval routinely returns more than one of
+    them - a UI listing the same citation repeatedly looks like a bug. Text is
+    deliberately not returned: the answer already quotes what it relies on, and
+    the excerpt bodies are large enough to dominate the response.
+    """
+    seen, out = set(), []
+    for c in chunks:
+        key = (c.get("source"), c.get("clause"), c.get("page"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(Source(source=c["source"], clause=c.get("clause"),
+                          clause_title=c.get("clause_title"), page=c.get("page")))
+    return out
+
+
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest, x_api_key: str | None = Header(default=None)) -> AskResponse:
     _check_auth(x_api_key)
-    result = answer_with_sources(req.question)
-    return AskResponse(**result)
+    answer, chunks = answer_question_with_context(req.question)
+    return AskResponse(answer=answer, sources=_sources(chunks))
