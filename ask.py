@@ -9,7 +9,15 @@ from langfuse import observe, propagate_attributes
 # If those are unset the SDK disables itself and every @observe below is a no-op.
 from tracing import langfuse
 
-TOP_K = 5
+# Retrieved chunks per question. 14 rather than 5 because clause chunks are
+# small (~690 chars): at k=5 the model saw ~3.4K chars and completeness was the
+# weakest axis by a wide margin. A 5/10/14 sweep moved it 3.85 -> 4.09 -> 4.24
+# (paired sign test p=0.013) with clause citation flat at 97%.
+#
+# Not higher: relevance falls monotonically over the same sweep (4.50 -> 4.29)
+# as tangential excerpts dilute the answer, and context tokens scale with k on
+# both the answer and judge calls. 14 is the knee, not a ceiling to raise.
+TOP_K = int(os.getenv("TOP_K", "14"))
 LLM_MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = """You answer questions about the SQF certification documents in
