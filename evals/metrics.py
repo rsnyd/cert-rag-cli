@@ -17,13 +17,31 @@ import re
 REFUSAL_MARKER = "not found in the provided documents"
 
 # The model does not always comply verbatim - it paraphrases roughly a fifth of
-# the time ("the provided documents do not specify ...") - so matching only the
-# literal marker scored correct refusals as failures. These are the paraphrases
-# the corpus actually produced, plus the marker itself.
-_DECLINE_RE = re.compile(
-    r"not found in the provided documents"
-    r"|(?:the\s+)?(?:provided\s+)?(?:documents?|excerpts?)\s+do(?:es)?\s+not\s+"
-    r"(?:specify|contain|provide|state|include|address|mention)",
+# the time - so matching only the literal marker scored correct refusals as
+# failures.
+#
+# Enumerating whole phrasings does not hold up either. An earlier version of this
+# module matched only "<documents> do not <verb>", which missed two shapes the
+# corpus produces regularly:
+#
+#   "Based on the provided excerpts, there is no minimum number of CCPs required"
+#   "Based on the provided excerpts, the specific dollar amount is not stated"
+#
+# Both decline; neither puts "documents" as the subject of "do not". One probe
+# alternated between matched and unmatched phrasings across runs of an identical
+# config, moving the reported refusal rate 20 points with no behavior change.
+#
+# So match a conjunction instead of a phrase list: the sentence must both refer
+# to the source documents AND negate. Either half alone is common in a genuine
+# answer ("the documents require ...", "there is no exemption for ..."), which is
+# what keeps this from firing on answers that are merely discussing an absence.
+_SCOPE_RE = re.compile(r"(?:provided\s+)?(?:documents?|excerpts?)", re.I)
+_NEGATION_RE = re.compile(
+    r"there\s+(?:is|are)\s+no\b"
+    r"|\bis\s+not\s+(?:stated|specified|mentioned|provided|given|listed|found"
+    r"|included|addressed|defined|established)"
+    r"|\bdo(?:es)?\s+not\s+(?:specify|contain|provide|state|include|address"
+    r"|mention|define|establish)",
     re.I,
 )
 
@@ -51,7 +69,10 @@ def _opening_sentence(answer: str) -> str:
 
 def is_refusal(answer: str) -> bool:
     """True if the system's top-line response declined to answer."""
-    return bool(_DECLINE_RE.search(_opening_sentence(answer)))
+    opening = _opening_sentence(answer)
+    if REFUSAL_MARKER in opening.lower():
+        return True
+    return bool(_SCOPE_RE.search(opening) and _NEGATION_RE.search(opening))
 
 
 def _segments(clause: str) -> tuple[int, ...] | None:
