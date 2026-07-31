@@ -11,6 +11,9 @@ from pathlib import Path
 
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from evals.metrics import answer_cites_expected_clause, is_refusal
+
 AXES = ["citation", "grounding", "factual", "complete", "relevant", "overall"]
 HITS = ["hit_1", "hit_3", "hit_5"]
 
@@ -44,8 +47,29 @@ def _hit_rate(df: pd.DataFrame, col: str) -> float:
 
 
 def _refusal_rate(df: pd.DataFrame) -> float:
-    vals = df["refused"].map(lambda v: str(v).lower() == "true")
-    return 100.0 * vals.mean() if len(df) else float("nan")
+    """Recomputed from the answer text, not read from the stored column.
+
+    Both derived metrics are pure functions of text the CSV already holds, so
+    recomputing costs nothing and means a run scored under an older, buggier
+    metric reports correctly without being re-run. That matters here: the
+    refusal regex was widened after five runs had already been scored, and the
+    `refused` column in those files understates the true rate by up to 40 points.
+    """
+    if not len(df):
+        return float("nan")
+    return 100.0 * df["system_answer"].map(lambda a: is_refusal(str(a))).mean()
+
+
+def _cites_rate(df: pd.DataFrame) -> float:
+    """Share of answers citing an expected clause. See metrics.py for why this
+    is the metric to compare across different chunking strategies."""
+    if not len(df):
+        return float("nan")
+    vals = df.apply(
+        lambda r: answer_cites_expected_clause(str(r["system_answer"]),
+                                               str(r["expected_clause"])),
+        axis=1)
+    return 100.0 * vals.mean()
 
 
 def summarize(csv_path: str) -> None:
@@ -64,6 +88,8 @@ def summarize(csv_path: str) -> None:
     print("\nClause hit rate:")
     for col in HITS:
         print(f"  {col}: {_hit_rate(scored, col):5.1f}%")
+    print(f"  cites expected: {_cites_rate(scored):5.1f}%  "
+          f"(comparable across chunking strategies)")
 
     print("\nAverage by axis:")
     print(scored[AXES].mean().round(2).to_string())
@@ -102,6 +128,9 @@ def compare(baseline_csv: str, variant_csv: str) -> None:
         av, bv = _hit_rate(a, col), _hit_rate(b, col)
         print(f"  {col:13s} baseline={av:5.1f}%  variant={bv:5.1f}%  "
               f"delta={bv-av:+.1f}")
+    av, bv = _cites_rate(a), _cites_rate(b)
+    print(f"  {'cites expected':13s} baseline={av:5.1f}%  variant={bv:5.1f}%  "
+          f"delta={bv-av:+.1f}")
 
     print("\nJudged axes (variant - baseline):")
     for col in AXES:
@@ -142,6 +171,9 @@ def compare_three(vanilla_csv: str, hybrid_csv: str, rerank_csv: str) -> None:
         vm, hm, rm = (_hit_rate(f, col) for f in (v, h, r))
         print(f"{col + ' %':16s}  {vm:>9.1f}  {hm:>9.1f}  {rm:>9.1f}  "
               f"{hm-vm:>+7.1f}  {rm-vm:>+7.1f}")
+    vm, hm, rm = (_cites_rate(f) for f in (v, h, r))
+    print(f"{'cites expected %':16s}  {vm:>9.1f}  {hm:>9.1f}  {rm:>9.1f}  "
+          f"{hm-vm:>+7.1f}  {rm-vm:>+7.1f}")
 
     print()
     for col in AXES:

@@ -147,3 +147,35 @@ def clause_hit_at_k(chunks: list[dict], expected_clause: str, k: int) -> bool:
 def retrieved_clauses(chunks: list[dict]) -> list[str]:
     """Clause numbers of the retrieved chunks, in rank order, for the CSV."""
     return [c.get("clause") or "-" for c in chunks]
+
+
+# Clause numbers as they appear in prose: "(source, clause 2.5.5.1, p.28)".
+_CLAUSE_IN_TEXT = re.compile(r"\b(\d+(?:\.\d+){1,4})\b")
+
+
+def answer_cites_expected_clause(answer: str, expected_clause: str) -> bool:
+    """True if the answer text itself cites one of the expected clauses.
+
+    The companion to clause_hit_at_k, and the one to reach for when comparing
+    configurations that chunk differently. clause_hit_at_k reads chunk["clause"],
+    so a chunker that does not emit that field scores 0% no matter how good its
+    retrieval is - it measures the absent field, not the retrieval. A fixed-window
+    ablation scored 0% on clause_hit_at_k while still citing the right clause in
+    73.5% of answers, because the model reads clause numbers out of the chunk text.
+
+    Reading the answer instead makes the metric chunk-size independent, at the
+    cost of no longer isolating retrieval from generation: a correct clause that
+    retrieval surfaced but the model declined to cite counts as a miss here. That
+    is the right trade for a compliance corpus, where an uncited requirement is
+    not a delivered answer.
+
+    Matching is on segment boundaries, exactly as in clause_hit_at_k.
+    """
+    expected = parse_expected_clauses(expected_clause)
+    if not expected:
+        return False
+    for match in _CLAUSE_IN_TEXT.finditer(answer or ""):
+        got = _segments(match.group(1))
+        if got and any(got[:len(exp)] == exp for exp in expected):
+            return True
+    return False

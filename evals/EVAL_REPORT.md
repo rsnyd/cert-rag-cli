@@ -202,8 +202,13 @@ must both refer to the source documents and negate - rather than matching a list
 of phrasings. Re-scored across all 5 runs, every run reads 5/5, and none of the
 170 scored answers changed classification, so the added recall cost no precision.
 
-The `refused` column in result CSVs written before this fix is stale; the
-corrected figures in this report were recomputed from the stored answer text.
+The `refused` column in result CSVs written before this fix is stale, so
+`analyze.py` no longer reads it: both derived metrics are recomputed from the
+stored answer text on every load. They are pure functions of text the CSV
+already holds, so this costs nothing and means a run scored under an older
+metric reports correctly without being re-run. Every figure in this report comes
+from that recomputation. `evals/check_metrics.py` pins the phrasings above so
+the fix cannot silently rot.
 
 ## What this measured and what it didn't
 
@@ -229,8 +234,10 @@ answer-cites-expected-clause metric for anything else.
 3. Hybrid retrieval and reranking (Week 4), now measurable against a k=14
    baseline rather than a k=5 one
 4. Separate the retrieval metric from the generation metric fully, so a failure
-   is attributable without reading the CSV
-5. Promote answer-cites-expected-clause into `metrics.py` alongside
-   `clause_hit_at_k`, since it is the metric that survives a chunking change
-6. Regression test for the `is_refusal` phrasings above, so the fix does not
-   silently rot
+   is attributable without reading the CSV. `answer_cites_expected_clause` is
+   deliberately not that separation - it conflates retrieval with the model's
+   willingness to cite, which is why `clause_hit_at_k` stays alongside it
+5. Page-level citation for the 40 DOCX SOPs. `python-docx` has no pagination, so
+   all 105 DOCX chunks carry `page=None` and their citations show source and
+   clause but no page. The fix is upstream in ingest (render to PDF first), not
+   in chunking

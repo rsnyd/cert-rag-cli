@@ -11,7 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from ask import answer_question_with_context
 
 from evals.judge import judge
-from evals.metrics import clause_hit_at_k, is_refusal, retrieved_clauses
+from evals.metrics import (answer_cites_expected_clause, clause_hit_at_k,
+                           is_refusal, retrieved_clauses)
 from langfuse import propagate_attributes
 from tracing import langfuse
 
@@ -31,7 +32,7 @@ FIELDNAMES = [
     "id", "difficulty", "tags", "question", "expected_clause",
     "system_answer", "refused",
     "factual", "complete", "relevant", "citation", "grounding", "overall",
-    "hit_1", "hit_3", "hit_5", "top_clauses",
+    "hit_1", "hit_3", "hit_5", "cites_expected", "top_clauses",
     "reasoning", "elapsed_sec",
 ]
 
@@ -47,7 +48,7 @@ def _blank_row(rec: dict) -> dict:
         "refused": "",
         "factual": "", "complete": "", "relevant": "",
         "citation": "", "grounding": "", "overall": "",
-        "hit_1": "", "hit_3": "", "hit_5": "",
+        "hit_1": "", "hit_3": "", "hit_5": "", "cites_expected": "",
         "top_clauses": "",
         "reasoning": "",
         "elapsed_sec": "",
@@ -134,6 +135,11 @@ def run_eval(run_name: str, config_notes: str = "", limit: int | None = None) ->
 
             hits = {k: clause_hit_at_k(chunks, rec["expected_clause"], k) for k in (1, 3, 5)}
             row["hit_1"], row["hit_3"], row["hit_5"] = hits[1], hits[3], hits[5]
+            # Recorded alongside hit@k because the two disagree in a way that
+            # matters: hit@k reads chunk metadata, this reads the answer, so it
+            # stays comparable across configurations that chunk differently.
+            row["cites_expected"] = answer_cites_expected_clause(
+                system_answer, rec["expected_clause"])
 
             try:
                 scores = judge(rec["question"], rec["reference_answer"],
@@ -225,6 +231,7 @@ def print_summary(rows: list[dict], dropped: dict[str, list[str]] | None = None)
     print(f"  clause hit@1:       {pct('hit_1', scored):.0f}%")
     print(f"  clause hit@3:       {pct('hit_3', scored):.0f}%")
     print(f"  clause hit@5:       {pct('hit_5', scored):.0f}%")
+    print(f"  cites expected:     {pct('cites_expected', scored):.0f}%")
     print(f"  False refusals:     {false_refusals}/{len(scored)}")
 
     print(f"\n=== Judged axes (n={len(scored)}) ===")
