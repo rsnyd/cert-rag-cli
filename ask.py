@@ -5,6 +5,10 @@ import sys
 from anthropic import Anthropic
 from langfuse import observe, propagate_attributes
 
+# The two metrics here are the reference-free ones: they need no golden record
+# and no judge call, so they can run on any answer. The judged axes stay in the
+# eval harness, which is the only place a reference answer exists.
+from evals.metrics import citation_grounding, is_refusal
 # Importing tracing constructs the Langfuse client from the LANGFUSE_* env vars.
 # If those are unset the SDK disables itself and every @observe below is a no-op.
 from tracing import langfuse
@@ -123,6 +127,35 @@ def generate(prompt: str) -> str:
     return answer
 
 
+def _score_answer(answer: str, chunks: list[dict]) -> None:
+    """Attach the reference-free scores to the current trace.
+
+    Runs on every answer, which is the point: the judged axes in run_eval.py
+    need a reference answer, so an interactive question could never carry a
+    quality signal and its Scores tab came up empty. These two need only the
+    answer and the context it was given.
+
+    Both are deliberately raw rather than pass/fail. `refusal` is correct
+    behavior on a question the corpus does not cover and a defect on one it
+    does, and nothing here knows which this was - run_eval.py has the golden
+    record and scores that judgement separately as `appropriate_refusal`.
+    """
+    langfuse.score_current_trace(
+        name="refusal",
+        value=1 if is_refusal(answer) else 0,
+        comment="1 = the answer declined to answer",
+    )
+    grounded = citation_grounding(answer, chunks)
+    # None means the answer cited nothing, so there is nothing to be right or
+    # wrong about. Recording 0.0 there would punish a clean refusal.
+    if grounded is not None:
+        langfuse.score_current_trace(
+            name="citation_grounding",
+            value=round(grounded, 3),
+            comment="fraction of cited clauses that appear in the retrieved excerpts",
+        )
+
+
 @observe(name="rag-answer")
 def answer_question_with_context(query: str) -> tuple[str, list[dict]]:
     """Run the full pipeline and return the answer AND the chunks it used.
@@ -133,7 +166,10 @@ def answer_question_with_context(query: str) -> tuple[str, list[dict]]:
     """
     chunks = retrieve(query)
     prompt = assemble_prompt(query, chunks)
-    return generate(prompt), chunks
+    answer = generate(prompt)
+    # Scored inside the span so score_current_trace has a trace to attach to.
+    _score_answer(answer, chunks)
+    return answer, chunks
 
 
 def answer_question(query: str) -> str:

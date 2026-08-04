@@ -149,6 +149,52 @@ def retrieved_clauses(chunks: list[dict]) -> list[str]:
     return [c.get("clause") or "-" for c in chunks]
 
 
+def cited_clauses(answer: str) -> list[tuple[int, ...]]:
+    """Every distinct clause the answer cites, as integer segments, in order.
+
+    Reads the answer with the same regex answer_cites_expected_clause uses, so
+    the two agree on what counts as a citation.
+    """
+    seen: list[tuple[int, ...]] = []
+    for match in _CLAUSE_IN_TEXT.finditer(answer or ""):
+        segs = _segments(match.group(1))
+        if segs and segs not in seen:
+            seen.append(segs)
+    return seen
+
+
+def citation_grounding(answer: str, chunks: list[dict]) -> float | None:
+    """Fraction of the answer's cited clauses that appear in the retrieved chunks.
+
+    The reference-free companion to the judge's citation axis. It needs no golden
+    record, so unlike the judged axes it can score an ad-hoc question, and it
+    catches the failure that matters most in a compliance corpus: an answer
+    citing a clause the model was never shown.
+
+    Matching is prefix-based in BOTH directions, because either nesting is a real
+    hit - an excerpt for 2.5.5.1 supports a citation of 2.5.5, and an excerpt for
+    2.5.5 supports a citation of its sub-clause 2.5.5.1. That is looser than
+    clause_hit_at_k, which only accepts the first direction because there the
+    expected clause is authoritative and the chunk is what gets tested.
+
+    Returns None when the answer cites nothing. That is an absence of evidence
+    rather than a score of zero: a refusal correctly cites nothing, and scoring
+    it 0.0 would drag the average down for behaving properly.
+    """
+    cited = cited_clauses(answer)
+    if not cited:
+        return None
+    available = [segs for c in chunks
+                 if (segs := _segments(c.get("clause") or "")) is not None]
+    if not available:
+        return 0.0
+    supported = sum(
+        1 for cit in cited
+        if any(cit[:len(av)] == av or av[:len(cit)] == cit for av in available)
+    )
+    return supported / len(cited)
+
+
 # Clause numbers as they appear in prose: "(source, clause 2.5.5.1, p.28)".
 _CLAUSE_IN_TEXT = re.compile(r"\b(\d+(?:\.\d+){1,4})\b")
 
