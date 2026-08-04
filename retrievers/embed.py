@@ -73,10 +73,16 @@ def _wait_for_slot() -> None:
     _last_call_at = time.monotonic()
 
 
-@observe(name="embed-query", as_type="embedding",
-         capture_input=False, capture_output=False)
-def embed_query(query: str, max_retries: int = 6) -> list[float]:
-    """Embed a query, pacing to the rate limit and retrying transient failures.
+def paced_call(operation: str, *, max_retries: int = 6, **kwargs):
+    """Run one Voyage API call under the process-wide pace and retry policy.
+
+    Every Voyage endpoint bills against the same account rate limit, so they all
+    queue behind this one gate. That matters for the rerank strategy, which
+    spends two requests per question - one embedding, one rerank. Pacing only
+    the embedding would let the rerank half slip past the limit unmetered and
+    put the run straight back into the 429s pacing exists to avoid.
+
+    `operation` names the method on the client: "embed", "rerank".
 
     Retries back off exponentially (10s, 20s, 40s, then capped at 60s) so a call
     that arrives mid-window waits out the whole per-minute bucket rather than
@@ -86,24 +92,32 @@ def embed_query(query: str, max_retries: int = 6) -> list[float]:
 
     Raises the last error if every attempt fails, so a genuinely dead API still
     surfaces as a RAG error in the eval rather than being silently swallowed.
+    """
+    for attempt in range(max_retries + 1):
+        _wait_for_slot()
+        try:
+            return getattr(_voyage(), operation)(**kwargs)
+        except RETRYABLE as err:
+            if attempt == max_retries:
+                raise
+            delay = min(60, 10 * (2 ** attempt))
+            print(f"    {type(err).__name__} from Voyage {operation}, retrying in "
+                  f"{delay}s (attempt {attempt + 1}/{max_retries})", file=sys.stderr)
+            time.sleep(delay)
+
+
+@observe(name="embed-query", as_type="embedding",
+         capture_input=False, capture_output=False)
+def embed_query(query: str, max_retries: int = 6) -> list[float]:
+    """Embed a query, paced and retried by paced_call.
 
     Traced as an "embedding" observation. We suppress the default input/output
     capture and set them by hand: logging the query text is useful, but the raw
     float vector is noise in the UI, so we record only its dimensionality.
     """
     langfuse.update_current_generation(model=EMBED_MODEL, input=query)
-    for attempt in range(max_retries + 1):
-        _wait_for_slot()
-        try:
-            embedding = _voyage().embed(
-                [query], model=EMBED_MODEL, input_type="query"
-            ).embeddings[0]
-            langfuse.update_current_generation(metadata={"dimensions": len(embedding)})
-            return embedding
-        except RETRYABLE as err:
-            if attempt == max_retries:
-                raise
-            delay = min(60, 10 * (2 ** attempt))
-            print(f"    {type(err).__name__} from Voyage, retrying in {delay}s "
-                  f"(attempt {attempt + 1}/{max_retries})", file=sys.stderr)
-            time.sleep(delay)
+    response = paced_call("embed", max_retries=max_retries,
+                          texts=[query], model=EMBED_MODEL, input_type="query")
+    embedding = response.embeddings[0]
+    langfuse.update_current_generation(metadata={"dimensions": len(embedding)})
+    return embedding
