@@ -14,7 +14,7 @@ from evals.judge import judge
 from evals.metrics import (answer_cites_expected_clause, clause_hit_at_k,
                            is_refusal, retrieved_clauses)
 from langfuse import propagate_attributes
-from tracing import langfuse
+from tracing import TRACING_ENABLED, langfuse
 
 # The five judge axes, mapped to the score names they get in Langfuse.
 SCORE_AXES = (
@@ -61,6 +61,15 @@ def run_eval(run_name: str, config_notes: str = "", limit: int | None = None) ->
     If `limit` is set, only the first N golden records are run - handy for cheap
     smoke tests that stay under the Voyage free-tier rate limit.
     """
+    # Credentials set but not working means someone meant to trace this run.
+    # Bail now rather than after 39 records of API spend: the CSV is only
+    # written once the loop completes, so a run discovered to be untraced
+    # halfway through is a total loss either way. Absent credentials are a
+    # deliberate untraced run and stay allowed.
+    if os.environ.get("LANGFUSE_PUBLIC_KEY") and not TRACING_ENABLED:
+        sys.exit("Refusing to start: Langfuse credentials are set but not working, "
+                 "so this run would produce no traces. See the message above.")
+
     records = [json.loads(line) for line in GOLDEN_FILE.open(encoding="utf-8")]
     total = len(records)
     if limit is not None:

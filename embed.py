@@ -8,6 +8,10 @@ import chromadb
 import voyageai
 from rich.progress import track
 
+# Loads .env, so VOYAGE_API_KEY below resolves the same way it does for the
+# query path. This script never imports tracing, so it needs its own import.
+import env  # noqa: F401
+
 CHUNKS_FILE = Path("data/chunks.jsonl")
 CHROMA_DIR = Path(".chroma")
 COLLECTION_NAME = "sqf_docs"
