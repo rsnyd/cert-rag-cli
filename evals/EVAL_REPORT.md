@@ -179,11 +179,95 @@ Three observations:
 `hit@1/3/5` held at 85/97/97% across all three, as expected - k does not reorder
 the top 5.
 
+## Experiment 3: retrieval strategy (vanilla vs hybrid vs rerank)
+
+Three full runs at k=14, chunking and prompt held fixed. Hybrid adds BM25 to the
+vector search and fuses with RRF; rerank takes hybrid's candidates and reorders
+them with Voyage `rerank-2.5`.
+
+```
+uv run python evals/analyze.py compare_three \
+  evals/results/20260804_162410_strategy_vanilla.csv \
+  evals/results/20260804_163913_strategy_hybrid.csv \
+  evals/results/20260804_165451_strategy_rerank.csv
+```
+
+| Metric           | Vanilla | Hybrid | Rerank |    H-V |    R-V |
+| ---------------- | ------- | ------ | ------ | ------ | ------ |
+| probe refusal %  |   100.0 |  100.0 |  100.0 |   +0.0 |   +0.0 |
+| false refusal %  |     2.9 |    5.9 |    0.0 |   +2.9 |   -2.9 |
+| hit@1 %          |    85.3 |   58.8 |   58.8 |  -26.5 |  -26.5 |
+| hit@3 %          |    97.1 |   88.2 |   82.4 |   -8.8 |  -14.7 |
+| hit@5 %          |    97.1 |   94.1 |   91.2 |   -2.9 |   -5.9 |
+| cites expected % |    97.1 |   94.1 |   97.1 |   -2.9 |   +0.0 |
+| citation         |    4.44 |   4.44 |   4.53 |  +0.00 |  +0.09 |
+| grounding        |    4.88 |   4.74 |   4.85 |  -0.15 |  -0.03 |
+| factual          |    4.71 |   4.59 |   4.71 |  -0.12 |  +0.00 |
+| complete         |    4.24 |   4.15 |   4.21 |  -0.09 |  -0.03 |
+| relevant         |    4.35 |   4.38 |   4.44 |  +0.03 |  +0.09 |
+| **overall**      |    4.52 |   4.46 |   4.55 |  -0.06 |  +0.02 |
+
+By difficulty: easy 4.78/4.58/4.85, medium 4.38/4.50/4.48, hard 4.42/4.29/4.31.
+
+Four observations:
+
+1. **Neither strategy separates on overall.** +0.02 for rerank and -0.06 for
+   hybrid sit at or under the 0.06 judge noise floor established above. At n=34
+   this experiment does not show that reranking helps; it shows it does not hurt.
+   Read the per-question movements, not the mean.
+2. **hit@1 falls 26.5 points without moving answer quality.** Both variants drop
+   to 58.8% while `cites expected` holds at 97.1% for rerank. BM25 reorders the
+   top of the list, but at k=14 the model still receives the right clause and
+   still cites it - hit@1 is measuring rank, and rank is not what reaches the
+   model. This is the clearest evidence yet that `hit@1` is the wrong headline
+   metric at this k, and that hit@5 (97.1 -> 91.2) is the one worth watching.
+3. **BM25 trades specific sub-clauses for their parents, and that is what the
+   regressions are.** `management-review-h1` drops 4.80 -> 3.60, and the
+   retrieved clauses show the mechanism directly:
+
+   ```
+   vanilla  2.1.3.5, 2.1.3.1, 2.1.2.2, 2.1.3.4, ...   specific sub-clauses
+   hybrid   2.1.2,   2.1.3.1, 2.1.3.2, 2.1.3.5, ...   leads with a parent
+   rerank   2.1.4, -, 2.1.2.1, 2.1.2.2, 2.1.4, -, ... parents + 3 chunks with no clause
+   ```
+
+   Section-level chunks repeat an element's vocabulary without stating any
+   requirement, so BM25 scores them well and they displace the sub-clause that
+   actually answers the question - `hit@3` goes False under rerank while
+   vanilla had the answer at ranks 1 and 2. `verification-h1` shows the same
+   shape (2.5.1.1 -> 2.5.1, 4.20 -> 3.20). The fix is chunk- or scoring-side:
+   demote chunks whose clause is a parent of a more specific chunk in the same
+   result set, or stop indexing section headers as retrievable chunks at all.
+
+   A tokenizer hypothesis was tested here and rejected. `management-review-h1`
+   is the only golden question naming a bare clause ("within Element 2.1"), and
+   BM25 cannot match it: `2.1` is an atomic token, clause 2.1.3.5 tokenizes to
+   `2.1.3.5`, and there is no prefix matching, so `2.1` reaches only 12 of 971
+   chunks. Indexing clause parents alongside each token fixes exactly that - 12
+   chunks reachable becomes 61, and the question's best expected-clause rank
+   improves from 14 to 6 - but it moves BM25 clause hit@14 from 97.1% to 94.1%
+   and leaves hit@28 unchanged. The questions it pushes out of the window
+   contain no clause number at all; they lose because parent tokens let broad
+   chunks outrank specific ones, which is the same defect above. Only 3 of 39
+   golden questions name a clause number, so the reachable upside was small and
+   the collateral cost was not. `retrievers/hybrid.py` records why it is absent.
+4. **Rerank recovers what hybrid loses.** Hybrid alone is the worst of the three
+   on overall, grounding, factual and false refusal (5.9%, its only 2/34 result);
+   rerank consumes the same candidate set and returns to vanilla or better on
+   every judged axis, plus the only 0% false-refusal run. The value is in the
+   reordering, not in the extra recall.
+
+Rerank costs two Voyage calls per question against one, so on the free tier's
+3 RPM / 10K TPM it is roughly double the wall-clock and needs its candidate set
+trimmed to a token budget. `retrievers/rerank.py` documents the measured budget.
+
 ## Resulting production configuration
 
 Baseline, with `TOP_K` raised from 5 to 14 (`ask.py`). Chunking, embedding,
-retrieval and prompt unchanged. Measured: overall 4.53, completeness 4.24,
-clause citation 97.1%, probe refusal 5/5, false refusal 1/34.
+retrieval and prompt unchanged - Experiment 3 found no strategy change that
+clears the noise floor, so vanilla retrieval stays in production. Measured:
+overall 4.53, completeness 4.24, clause citation 97.1%, probe refusal 5/5,
+false refusal 1/34.
 
 ## Defect found and fixed
 
@@ -231,8 +315,11 @@ answer-cites-expected-clause metric for anything else.
 
 1. Second-reader review of the 34 reference answers and expected clauses
 2. Larger golden set (100+) for more stable averages, and more than 5 probes
-3. Hybrid retrieval and reranking (Week 4), now measurable against a k=14
-   baseline rather than a k=5 one
+3. Stop BM25 returning section-level parents in place of the sub-clause that
+   states the requirement (Experiment 3, observation 3), then re-run the
+   strategy comparison. Hybrid and rerank were measured against the k=14
+   baseline and neither cleared the noise floor, but this defect was working
+   against both, so the comparison is not yet a fair one
 4. Separate the retrieval metric from the generation metric fully, so a failure
    is attributable without reading the CSV. `answer_cites_expected_clause` is
    deliberately not that separation - it conflates retrieval with the model's

@@ -24,6 +24,17 @@ _bm25_cache: BM25Okapi | None = None
 # most precise lexical signal this corpus has.
 _TOKEN = re.compile(r"[a-z0-9]+(?:\.[a-z0-9]+)+|[a-z0-9]+")
 
+# Indexing clause-number parents alongside each token ("2.1.3.5" also emitting
+# "2.1.3" and "2.1") was tried here and reverted. It does what it claims - the
+# query token "2.1" goes from reaching 12 chunks to 61, and the one golden
+# question naming a bare clause improves from rank 14 to 6 - but it lowers BM25
+# clause hit@14 across the scored set from 97.1% to 94.1% and leaves hit@28
+# unchanged. The three questions it pushes out of the window contain no clause
+# number at all: they lose because parent tokens let broad section-level chunks
+# outrank specific sub-clauses. That is the same failure hybrid already has (see
+# EVAL_REPORT Experiment 3), so the expansion makes the real problem worse while
+# fixing a cosmetic one. Only 3 of 39 golden questions name a clause at all.
+
 
 def _tokenize(text: str) -> list[str]:
     return _TOKEN.findall(text.lower())

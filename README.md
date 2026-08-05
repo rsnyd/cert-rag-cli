@@ -126,3 +126,28 @@ for every requirement, and if the excerpts do not contain it, say "Not found in
 the provided documents" and stop - never supply a requirement from general
 knowledge or another standard. A confident "not found" is a correct answer here; a
 confident fabrication is the one outcome the system is designed to prevent.
+
+## Architecture
+
+data/source/*.pdf,docx
+  -> ingest.py     extract, OCR scanned pages, strip running headers
+  -> data/raw/*.jsonl
+  -> chunk.py      split on SQF clause boundaries, carry clause/page metadata
+  -> data/chunks.jsonl
+  -> embed.py      Voyage voyage-3-lite -> Chroma (sqf_docs)
+  -> ask.py        retrieve -> assemble cited prompt -> Claude Sonnet 4.6
+
+Retrieval strategies (RETRIEVAL_STRATEGY env var):
+  vanilla  cosine similarity, top_k=5
+  hybrid   BM25 + cosine fused with RRF (clause-safe tokenizer)
+  rerank   hybrid candidates reranked by Voyage rerank-2.5
+
+Evaluation:
+  evals/golden.jsonl   34 scored questions + 5 out-of-corpus refusal probes
+  evals/metrics.py     deterministic clause_hit@k and refusal detection
+  evals/judge.py       Claude Sonnet 4.6, five axes including citation and grounding
+  evals/run_eval.py    runner, CSV output, Langfuse scores
+  evals/analyze.py     summarize / compare / compare_three
+
+Observability: Langfuse, self-hosted. Every run is a session; every question is
+a trace with judge scores attached.
