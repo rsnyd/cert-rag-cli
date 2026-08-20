@@ -1,6 +1,7 @@
 __pycache__/
 .env
 .chroma/
+.chroma_langchain/
 data/
 evals/results/*.csv
 evals/results/*.html
