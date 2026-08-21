@@ -14,7 +14,7 @@ expect_refusal:
   - a scored question (expect_refusal false) names a real expected_clause;
   - a probe (expect_refusal true, difficulty "probe") has a null expected_clause
     and a reference_answer that starts with "Not found in the provided documents".
-23
+
 The set intentionally exceeds a flat 30/10/10/10 so it can cover every area in
 COVERAGE at least once, so the difficulty split is reported, not asserted.
 """
