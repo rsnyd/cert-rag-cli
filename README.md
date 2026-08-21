@@ -138,16 +138,18 @@ data/source/*.pdf,docx
   -> ask.py        retrieve -> assemble cited prompt -> Claude Sonnet 4.6
 
 Retrieval strategies (RETRIEVAL_STRATEGY env var):
-  vanilla  cosine similarity, top_k=5
+  vanilla  cosine similarity, top_k=14
   hybrid   BM25 + cosine fused with RRF (clause-safe tokenizer)
   rerank   hybrid candidates reranked by Voyage rerank-2.5
 
 Evaluation:
-  evals/golden.jsonl   34 scored questions + 5 out-of-corpus refusal probes
-  evals/metrics.py     deterministic clause_hit@k and refusal detection
-  evals/judge.py       Claude Sonnet 4.6, five axes including citation and grounding
-  evals/run_eval.py    runner, CSV output, Langfuse scores
-  evals/analyze.py     summarize / compare / compare_three
+  evals/golden.jsonl     34 scored questions + 5 out-of-corpus refusal probes
+  evals/validate.py      golden-set schema, clause grounding, area coverage
+  evals/metrics.py       deterministic clause_hit@k, refusal, citation grounding
+  evals/check_metrics.py regression cases for metrics.py
+  evals/judge.py         Claude Sonnet 4.6, five axes including citation and grounding
+  evals/run_eval.py      runner, CSV output, Langfuse scores
+  evals/analyze.py       summarize / compare / compare_three
 
 Observability: Langfuse, self-hosted. Every run is a session; every question is
 a trace with judge scores attached.

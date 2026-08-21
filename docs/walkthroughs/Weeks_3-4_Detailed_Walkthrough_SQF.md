@@ -137,13 +137,27 @@ expected clause. You write these by hand. There is no shortcut. A bad golden set
 produces meaningless scores no matter how good your judge is.
 
 The common mistake is writing only easy questions where the right chunk is
-obvious. Mix difficulties: 10 easy (single clause, single lookup), 10 medium
-(synthesis across 2-3 clauses), 10 hard (edge cases, comparisons, "what happens
-if" reasoning).
+obvious. Mix difficulties: easy (single clause, single lookup), medium (synthesis
+across 2-3 clauses), hard (edge cases, comparisons, "what happens if"
+reasoning).
 
-On top of the 30, add 5 probe questions whose answers are deliberately not in
-your corpus. These measure refusal, and they are the single most important safety
-metric you will produce.
+On top of the scored questions, add 5 probe questions whose answers are
+deliberately not in your corpus. These measure refusal, and they are the single
+most important safety metric you will produce.
+
+**What this repo's set actually became: 34 scored + 5 probes = 39 records**,
+split easy 11 / medium 12 / hard 11. That is not a round 10/10/10, and the
+lopsidedness is the point. Aim for a flat split and you will find yourself either
+skipping a requirement area because you already have your ten hard questions, or
+padding an area you have covered because you are one short. Coverage of the
+requirement areas is the constraint that matters; the difficulty split is a
+report, not a target. `validate.py` below is written that way - it *prints* the
+split and *asserts* the coverage.
+
+Ids are slugs, not counters: `internal-audits-m1`, not `Q017`. When a run fails
+you read the id in a CSV row, and `sanitation-pest-m1` tells you where you are
+without a lookup. Counters also invite renumbering every time you insert a
+question, which quietly breaks comparisons against older result files.
 
 ### Reading (1 hour)
 
@@ -162,37 +176,52 @@ Write five questions today. One JSON object per line. The schema:
 
 | Field | Meaning |
 |---|---|
-| `id` | `Q001`-`Q030` for scored questions, `P001`+ for probes |
+| `id` | Area-and-difficulty slug: `internal-audits-m1`, `probe-air-changes-per-hour` |
 | `difficulty` | `easy`, `medium`, `hard`, or `probe` |
 | `tags` | 1-3 topic tags, used to slice results later |
 | `question` | What the user asks |
-| `expected_clause` | The clause that contains the requirement. `null` for probes |
+| `expected_clause` | The clause(s) containing the requirement - single, comma list, or range. `null` for probes |
 | `expect_refusal` | `true` only for probes |
 | `reference_answer` | What a competent SQF practitioner would accept |
 | `expected_topics` | 3-6 concrete terms that should appear |
 
-> **These examples are scaffolding, not content.** The clause numbers and
-> reference answers below are plausible-looking placeholders. SQF clause
-> numbering differs by edition and by which code you are certified against, and
-> your internal SOPs have their own numbering entirely. Open your actual
-> documents and rewrite every `expected_clause` and every `reference_answer`
-> from what they say. If you skip this, the retrieval metric measures nothing
-> and the judge scores against fiction.
+> **Write these from your own documents.** The records below are the real ones
+> from this repo's `golden.jsonl`, quoted verbatim so you can see the shape a
+> finished record takes - the length of a reference answer, how specific
+> `expected_topics` gets, how a probe explains *why* it is out of corpus. They
+> are not a starter set to copy. SQF clause numbering differs by edition and by
+> which code you are certified against (this corpus is Fundamentals 1.1, not
+> Code Edition 9), and your internal SOPs have their own numbering entirely.
+> Every `expected_clause` and `reference_answer` has to come out of the document
+> in front of you, or the retrieval metric measures nothing and the judge scores
+> against fiction.
+
+Three scored records, one per `expected_clause` form:
 
 ```json
-{"id": "Q001", "difficulty": "easy", "tags": ["internal-audit", "verification"], "question": "How often must internal audits of the SQF System be conducted?", "expected_clause": "2.5.5", "expect_refusal": false, "reference_answer": "Internal audits of the SQF System must be conducted at least annually. The audit schedule and responsibility are defined by the SQF practitioner, and audit findings, corrective actions, and follow-up verification are documented and the records retained.", "expected_topics": ["annually", "internal audit", "corrective action", "records", "schedule"]}
-{"id": "Q002", "difficulty": "easy", "tags": ["management-commitment"], "question": "What is the SQF practitioner responsible for?", "expected_clause": "2.1.2", "expect_refusal": false, "reference_answer": "The SQF practitioner is designated by senior management, must be employed full time by the site, and is responsible for developing, implementing, reviewing and maintaining the SQF System. The practitioner must have completed a HACCP training course and be able to demonstrate competency in food safety principles relevant to the site.", "expected_topics": ["designated", "full time", "HACCP training", "implement and maintain", "competency"]}
-{"id": "Q003", "difficulty": "medium", "tags": ["recall", "traceability"], "question": "How frequently must the product withdrawal and recall program be tested, and what has to be recorded?", "expected_clause": "2.6.3", "expect_refusal": false, "reference_answer": "The withdrawal and recall program must be tested at least annually to verify it is effective. The test is documented, including the reconciliation of product quantities, the time taken to complete the trace, and any gaps found. Results are reviewed and used to update the program.", "expected_topics": ["annually", "mock recall", "effectiveness", "reconciliation", "records"]}
-{"id": "Q004", "difficulty": "medium", "tags": ["supplier-approval", "specifications"], "question": "What is required to approve a raw material supplier?", "expected_clause": "2.3.3", "expect_refusal": false, "reference_answer": "Raw materials and packaging must be sourced from approved suppliers. Approval is based on a documented risk assessment and supported by agreed specifications and evidence of the supplier's food safety controls, such as a certificate of conformance or an audit. An approved supplier register is maintained and supplier performance is reviewed at a defined frequency.", "expected_topics": ["approved supplier register", "risk assessment", "specifications", "certificate of conformance", "review"]}
-{"id": "Q005", "difficulty": "hard", "tags": ["corrective-action", "food-safety-plan"], "question": "What has to happen when a critical limit at a CCP is exceeded?", "expected_clause": "2.5.3", "expect_refusal": false, "reference_answer": "When a critical limit is exceeded the affected product must be identified, segregated and held pending disposition. The cause is investigated, corrective action is taken to bring the CCP back under control, and preventative action is taken to stop recurrence. The deviation, the product disposition, the responsible person and the verification of effectiveness are all recorded.", "expected_topics": ["hold and segregate", "root cause", "corrective action", "preventative action", "disposition", "records"]}
+{"id": "sys-elements-e1", "difficulty": "easy", "tags": ["system-elements"], "question": "What must the site's food safety policy statement include at a minimum, and who is responsible for it?", "reference_answer": "Senior site management shall prepare and implement a policy statement (2.1.1.1) that outlines as a minimum: (i) the site's commitment to supply safe food; (ii) the methods used to comply with its customer and regulatory requirements; and (iii) the site's commitment to establish and review food safety objectives.", "expected_topics": ["food safety policy", "senior management", "safe food commitment", "customer and regulatory requirements", "food safety objectives"], "expected_clause": "2.1.1.1", "expect_refusal": false}
+{"id": "internal-audits-e1", "difficulty": "easy", "tags": ["internal-audits"], "question": "How often must internal audits of the SQF System be conducted?", "reference_answer": "Per 2.5.5.1, the methods and responsibility for scheduling and conducting internal audits to verify the effectiveness of the SQF System shall be documented and implemented, and internal audits shall be conducted at least annually.", "expected_topics": ["internal audit", "at least annually", "verify SQF System effectiveness", "documented and implemented"], "expected_clause": "2.5.5.1", "expect_refusal": false}
+{"id": "sys-elements-m1", "difficulty": "medium", "tags": ["system-elements"], "question": "Senior management must designate a person responsible for the SQF System at each site. What authority and qualifications must that person have?", "reference_answer": "Under 2.1.2.4 the designated person shall have responsibility and authority to: (i) lead the development and implementation of the GMPs in 2.4.2; (ii) oversee the development, implementation, review and maintenance of the SQF System; and (iii) take appropriate action to ensure the integrity of the SQF System. Under 2.1.2.5 that person shall be fully employed or contracted by the site, hold a position of responsibility in relation to managing the site's SQF System, be competent to implement and maintain food safety fundamentals, and have an understanding of the SQF Food Safety Fundamentals and the requirements to implement and maintain the SQF System for the site's scope.", "expected_topics": ["designated person", "authority", "GMP leadership", "SQF System integrity", "competency", "employed or contracted"], "expected_clause": "2.1.2.4, 2.1.2.5", "expect_refusal": false}
 ```
 
-Three probe questions to add now, so refusal is measured from the first run:
+And the hard ones, where a single requirement genuinely spans a run of
+sub-clauses, use a range:
 
 ```json
-{"id": "P001", "difficulty": "probe", "tags": ["probe", "out-of-corpus"], "question": "What is the maximum civil penalty for an OSHA recordkeeping violation?", "expected_clause": null, "expect_refusal": true, "reference_answer": "Not found in the provided documents. This is an occupational safety question and is outside the SQF certification corpus.", "expected_topics": []}
-{"id": "P002", "difficulty": "probe", "tags": ["probe", "other-scheme"], "question": "What does BRCGS require for the pre-production hygiene check?", "expected_clause": null, "expect_refusal": true, "reference_answer": "Not found in the provided documents. BRCGS is a different GFSI scheme and its requirements are not in this corpus.", "expected_topics": []}
-{"id": "P003", "difficulty": "probe", "tags": ["probe", "invented-threshold"], "question": "What is the required minimum ozone concentration for the water reuse loop?", "expected_clause": null, "expect_refusal": true, "reference_answer": "Not found in the provided documents. No such threshold is specified in the corpus.", "expected_topics": []}
+{"id": "sys-elements-h1", "difficulty": "hard", "tags": ["system-elements", "management-review"], "question": "How does SQF Fundamentals allocate management responsibility for food safety across reporting structure, resources, competency, and cover for absences?", "reference_answer": "Element 2.1.2 spreads the responsibility across six sub-clauses: 2.1.2.1 the reporting structure for those responsible for food safety shall be documented, identified and communicated within the site; 2.1.2.2 senior management shall ensure fundamental food safety practices and all applicable SQF System requirements are adopted and maintained; 2.1.2.3 senior management shall ensure adequate resources are available to achieve food safety objectives and support development, implementation, maintenance and ongoing improvement; 2.1.2.4 a designated person is appointed with authority over GMPs, oversight of the SQF System, and its integrity; 2.1.2.5 sets that person's competency and employment requirements; and 2.1.2.6 job descriptions for those responsible for food safety shall be documented and include provision to cover for the absence of key personnel.", "expected_topics": ["reporting structure", "adequate resources", "designated person", "competency", "job descriptions", "cover for absence"], "expected_clause": "2.1.2.1-2.1.2.6", "expect_refusal": false}
+```
+
+Those three forms - `2.1.1.1`, `2.1.2.4, 2.1.2.5`, `2.1.2.1-2.1.2.6` - are not
+cosmetic. **25 of the 34 scored records use a list or a range**, so the metric
+that reads this field has to parse it rather than string-compare it. That is
+`parse_expected_clauses` on Day 2, and skipping it scores three-quarters of your
+set as misses no matter how good retrieval is.
+
+Two probe questions, to measure refusal from the first run:
+
+```json
+{"id": "probe-iso-22000-team-leader", "difficulty": "probe", "tags": ["probe", "cross-standard", "food-safety-plan"], "question": "What does ISO 22000 require for the qualifications of the food safety team leader?", "reference_answer": "Not found in the provided documents. ISO 22000 is a different standard and is not part of this corpus, which covers SQF Fundamentals 1.1 (and SQF Code Edition 10 for reference). A requirement from another standard must not be supplied. SQF Fundamentals does address HACCP training in 2.9.4.1, but the question asks specifically about ISO 22000, which the documents do not contain.", "expected_topics": ["Not found in the provided documents"], "expected_clause": null, "expect_refusal": true}
+{"id": "probe-finished-product-micro-limit", "difficulty": "probe", "tags": ["probe", "not-specified", "supplier-approval"], "question": "What is the maximum total plate count and Salmonella limit that finished product must meet before it can be released?", "reference_answer": "Not found in the provided documents. The corpus does not state any numeric finished-product microbiological release limit. Clause 2.3.5.1 says finished product specifications may include microbiological and chemical limits but states no values, and 2.4.7.1 requires release only after inspections and analyses verify food safety controls are met, again without a numeric limit. The <10 CFU figure in the environmental monitoring program is an Enterobacteriaceae sanitation-indicator limit for surfaces, not a finished-product release specification, and must not be offered as one.", "expected_topics": ["Not found in the provided documents"], "expected_clause": null, "expect_refusal": true}
 ```
 
 Note what makes a good probe: it sounds like it belongs. "What is the maximum
@@ -200,6 +229,19 @@ fine for jaywalking" is not a useful probe because no system would answer it. A
 question about a neighbouring GFSI scheme, or a plausible-sounding threshold that
 simply is not in your documents, is exactly the kind of thing a RAG will
 confabulate when retrieval returns something adjacent.
+
+The probe reference answers are longer than you would expect, and deliberately
+so. A probe's reference answer has to name the *near miss* - the clause that
+looks like an answer, and why it is not one. `probe-finished-product-micro-limit`
+is the sharpest example: the corpus does contain a `<10 CFU` number, it is just
+an environmental-surface sanitation indicator rather than a finished-product
+release limit. Retrieval will surface it every time. Writing that trap into the
+reference answer is what lets the judge tell "correctly refused" apart from
+"refused because retrieval found nothing," which are very different systems.
+
+Every probe's reference answer opens with the literal string
+`Not found in the provided documents` - `validate.py` enforces that on Day 2, and
+`is_refusal` in `metrics.py` keys off the same phrase.
 
 ```bash
 git add evals/
@@ -214,17 +256,35 @@ The slog day. The output is your most valuable artifact for the rest of the plan
 
 ### Process
 
-Block 2-3 uninterrupted hours. Write the remaining 25 scored questions and 2 more
-probes in one sitting if you can. Work from your actual documents, open beside
-you. Aim for 10 easy, 10 medium, 10 hard, plus 5 probes.
+Block 2-3 uninterrupted hours. Write the remaining scored questions and the rest
+of the probes in one sitting if you can. Work from your actual documents, open
+beside you. Drive to coverage of every requirement area below, not to a
+difficulty quota - this repo's set landed at 34 scored (easy 11, medium 12, hard
+11) plus 5 probes because that is what covering all 14 areas took.
 
-Tag every question. Useful tags for this corpus:
+The natural rhythm is one area at a time, easy then medium then hard, which is
+also where the id slugs come from: `training-e1`, `training-m1`, `training-h1`.
+Some areas support all three, some only one - `calibration` has a single medium
+question because there is one calibration requirement worth asking about.
 
-`management-commitment`, `management-review`, `document-control`, `records`,
-`specifications`, `supplier-approval`, `food-safety-plan`, `ccp`,
-`corrective-action`, `verification`, `internal-audit`, `traceability`, `recall`,
-`food-defense`, `food-fraud`, `allergen-management`, `training`, `calibration`,
-`sanitation`, `pest-control`
+Tag every question. This corpus's tag vocabulary, which the `COVERAGE` map in
+`validate.py` keys off by exact string:
+
+`system-elements`, `management-review`, `document-control`, `supplier-approval`,
+`food-safety-plan`, `corrective-action`, `verification`, `internal-audits`,
+`traceability-recall`, `food-defense`, `food-fraud`, `allergen-management`,
+`training`, `calibration`, `sanitation`, `pest-control`
+
+Probes additionally carry `probe` plus a reason tag naming *why* the answer is
+absent: `not-specified` (the corpus is silent on a real question),
+`cross-standard` (belongs to ISO 22000 or BRCGS, not SQF), `false-premise` (the
+question assumes a requirement that does not exist, like a minimum CCP count),
+`out-of-scope` (certification fees and other things outside the documents
+entirely). Four different failure modes; you want at least one of each.
+
+Keep the tags stable once you write them. They are strings in a `lambda` in
+`validate.py`, so renaming `internal-audits` to `internal-audit` turns a coverage
+assertion into a silent gap.
 
 Tags let you slice results later: "where does this system fail? Mostly on
 allergen management and calibration."
@@ -244,12 +304,18 @@ allergen management and calibration."
   else, you are testing the part of the corpus you find most interesting rather
   than the corpus.
 - For `expected_clause`, use the most specific clause that actually contains the
-  requirement. If a requirement genuinely spans two clauses, use the primary one;
-  the `startswith` matching in the metric handles sub-clauses automatically.
+  requirement. If a requirement genuinely spans several clauses, name them all -
+  a comma list (`2.1.2.4, 2.1.2.5`) or, for a contiguous run, a range
+  (`2.1.2.1-2.1.2.6`). Do not collapse to a parent clause to keep the field
+  tidy: the metric already counts a retrieved sub-clause as a hit for its
+  parent, so a parent is the *loose* answer, and writing `2.1.2` where you mean
+  six specific sub-clauses makes the metric easier to pass than the question
+  actually is.
 
 ### Coverage checklist
 
-Hit at least one question in each area:
+Hit at least one question in each area. These fourteen are exactly the `COVERAGE`
+map in `validate.py`, which fails the run if any is unhit:
 
 - Management commitment, policy, and management review
 - Document control and record retention
@@ -268,76 +334,254 @@ Hit at least one question in each area:
 
 ### Project: `evals/validate.py`
 
+This is one of the two things in this repo that function as tests (the other is
+`check_metrics.py`, below). It does four jobs, and only the first is the obvious
+one:
+
+1. **Schema.** Every row carries exactly the eight fields - missing *and* extra
+   are errors, so a typo'd key is caught rather than silently ignored by the
+   runner's `.get()`.
+2. **The probe convention.** `expect_refusal` and `difficulty == "probe"` must
+   agree, a probe's `expected_clause` must be null, and its `reference_answer`
+   must start with `Not found in the provided documents`. Three signals that all
+   mean "probe", checked against each other, because a half-converted row scores
+   as a failed scored question rather than a passed probe.
+3. **Clause grounding.** Every `expected_clause` must actually appear somewhere
+   in `data/raw/`. This is the check that earns its keep: it catches a clause
+   number you transcribed wrong, or one that exists in Code Edition 10 but not
+   in Fundamentals 1.1. Without it the metric reports a miss and you go looking
+   at retrieval, when the bug is in the golden set. It downgrades to a warning
+   when the corpus is not present, so a fresh clone can still validate schema.
+4. **Coverage.** The fourteen requirement areas above, as predicates. Missing an
+   area fails the run.
+
+Note what it does *not* assert: a 30/10/10/10 split. It prints the distribution
+and moves on, for the reason given on Day 1 - coverage is the constraint,
+difficulty balance is a report. Exit code is 0 when valid, 1 on any error, so it
+works in CI or a pre-commit hook.
+
 Complete file. Create it and paste:
 
 ```python
-"""Validate the structure of the SQF golden set.
+"""Validate the SQF golden set: schema, refusal-probe convention, clause
+grounding, and requirement-area coverage.
 
-Checks the scored questions and the refusal probes separately, since they have
-different required fields: a scored question needs an expected_clause, a probe
-needs expect_refusal set and no clause.
+Run it before trusting the golden set in an eval:
+
+    uv run python evals/validate.py            # validate evals/golden.jsonl
+    uv run python evals/validate.py path.jsonl # validate another file
+
+Exit code is 0 when the set is valid, 1 when any error is found. Warnings (for
+example, a missing corpus so clause grounding is skipped) do not fail the run.
+
+Scored questions and refusal probes have different contracts, keyed off
+expect_refusal:
+  - a scored question (expect_refusal false) names a real expected_clause;
+  - a probe (expect_refusal true, difficulty "probe") has a null expected_clause
+    and a reference_answer that starts with "Not found in the provided documents".
+
+The set intentionally exceeds a flat 30/10/10/10 so it can cover every area in
+COVERAGE at least once, so the difficulty split is reported, not asserted.
 """
 import json
+import re
+import sys
 from collections import Counter
 from pathlib import Path
 
-GOLDEN_FILE = Path("evals/golden.jsonl")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+GOLDEN_PATH = REPO_ROOT / "evals" / "golden.jsonl"
+RAW_DIR = REPO_ROOT / "data" / "raw"
 
-REQUIRED = {
-    "id", "difficulty", "tags", "question",
-    "expected_clause", "expect_refusal",
-    "reference_answer", "expected_topics",
+SCHEMA_FIELDS = {"id", "difficulty", "tags", "question", "reference_answer",
+                 "expected_topics", "expected_clause", "expect_refusal"}
+DIFFICULTIES = {"easy", "medium", "hard", "probe"}
+REFUSAL_PREFIX = "Not found in the provided documents"
+
+_CLAUSE_TOKEN = re.compile(r"\b\d+(?:\.\d+){1,4}\b")
+
+# Each requirement area maps to a predicate over a row. The set must hit every
+# one at least once - this is the coverage checklist it is built to.
+COVERAGE = {
+    "Management commitment, policy, and management review":
+        lambda r: {"system-elements", "management-review"} & set(r["tags"]),
+    "Document control and record retention":
+        lambda r: "document-control" in r["tags"],
+    "Specifications and supplier approval":
+        lambda r: "supplier-approval" in r["tags"],
+    "The food safety plan and hazard analysis":
+        lambda r: "food-safety-plan" in r["tags"] and not r["expect_refusal"],
+    "CCP monitoring and critical limits":
+        lambda r: "critical limits" in " ".join(r["expected_topics"]).lower(),
+    "Corrective and preventative action":
+        lambda r: "corrective-action" in r["tags"],
+    "Verification and validation activities":
+        lambda r: "verification" in r["tags"] and not r["expect_refusal"],
+    "Internal audits":
+        lambda r: "internal-audits" in r["tags"],
+    "Product identification, traceability, withdrawal and recall":
+        lambda r: "traceability-recall" in r["tags"],
+    "Food defense and food fraud":
+        lambda r: "food-defense" in r["tags"],
+    "Allergen management":
+        lambda r: "allergen-management" in r["tags"],
+    "Training and competency":
+        lambda r: "training" in r["tags"],
+    "Calibration of monitoring equipment":
+        lambda r: "calibration" in r["tags"],
+    "Sanitation and pest control":
+        lambda r: {"sanitation", "pest-control"} & set(r["tags"]),
 }
 
-SCORED_DIFFICULTIES = {"easy", "medium", "hard"}
+
+def load_corpus_clauses() -> set[str] | None:
+    """Set of clause tokens present in the corpus, or None if it is not here."""
+    if not RAW_DIR.is_dir():
+        return None
+    present: set[str] = set()
+    for fp in RAW_DIR.glob("*.jsonl"):
+        for line in fp.open(encoding="utf-8"):
+            present.update(_CLAUSE_TOKEN.findall(json.loads(line).get("text", "")))
+    return present
+
+
+def parse_clauses(expr: str) -> set[str]:
+    """Clause tokens named by an expected_clause string.
+
+    Handles comma-separated lists and hyphenated ranges; for a range only the
+    two endpoints are returned (enough to confirm the range is real in-corpus).
+    """
+    tokens: set[str] = set()
+    for part in expr.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            tokens.update(p.strip() for p in part.split("-", 1))
+        else:
+            tokens.add(part)
+    return tokens
+
+
+def _is_str_list(value) -> bool:
+    return isinstance(value, list) and all(isinstance(v, str) for v in value)
+
+
+def validate_row(row: dict, present: set[str] | None) -> list[str]:
+    """Return a list of error strings for one row (empty if the row is valid)."""
+    errors: list[str] = []
+    rid = row.get("id", "<no id>")
+
+    missing = SCHEMA_FIELDS - set(row)
+    extra = set(row) - SCHEMA_FIELDS
+    if missing:
+        errors.append(f"{rid}: missing fields {sorted(missing)}")
+    if extra:
+        errors.append(f"{rid}: unexpected fields {sorted(extra)}")
+    # Fields below are read with .get(); missing ones are already reported above.
+
+    difficulty = row.get("difficulty")
+    if difficulty not in DIFFICULTIES:
+        errors.append(f"{rid}: difficulty {difficulty!r} not in {sorted(DIFFICULTIES)}")
+
+    if not (isinstance(row.get("tags"), list) and row.get("tags") and _is_str_list(row["tags"])):
+        errors.append(f"{rid}: tags must be a non-empty list of strings")
+
+    for field in ("question", "reference_answer"):
+        if not (isinstance(row.get(field), str) and row.get(field, "").strip()):
+            errors.append(f"{rid}: {field} must be a non-empty string")
+
+    if not _is_str_list(row.get("expected_topics")):
+        errors.append(f"{rid}: expected_topics must be a list of strings")
+
+    refusal = row.get("expect_refusal")
+    if not isinstance(refusal, bool):
+        errors.append(f"{rid}: expect_refusal must be a boolean")
+    # A probe is exactly a refusal row; the two signals must not disagree.
+    if isinstance(refusal, bool) and refusal != (difficulty == "probe"):
+        errors.append(f"{rid}: expect_refusal={refusal} disagrees with difficulty={difficulty!r}")
+
+    ec = row.get("expected_clause")
+    if refusal is True:
+        if ec is not None:
+            errors.append(f"{rid}: refusal rows must have expected_clause=null (got {ec!r})")
+        if not str(row.get("reference_answer", "")).startswith(REFUSAL_PREFIX):
+            errors.append(f'{rid}: refusal reference_answer must start with "{REFUSAL_PREFIX}"')
+    elif refusal is False:
+        if not (isinstance(ec, str) and ec.strip()):
+            errors.append(f"{rid}: scored rows must cite a non-empty expected_clause")
+        elif present is not None:
+            absent = sorted(c for c in parse_clauses(ec) if c not in present)
+            if absent:
+                errors.append(f"{rid}: expected_clause not found in corpus: {absent}")
+
+    return errors
+
+
+def validate(path: Path) -> tuple[list[str], list[str], list[dict]]:
+    """Validate a golden file. Returns (errors, warnings, rows)."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not path.is_file():
+        return [f"golden file not found: {path}"], warnings, []
+
+    present = load_corpus_clauses()
+    if present is None:
+        warnings.append(f"corpus {RAW_DIR} not found - skipping clause grounding check")
+
+    rows: list[dict] = []
+    seen_ids: Counter[str] = Counter()
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as e:
+            errors.append(f"line {lineno}: invalid JSON ({e})")
+            continue
+        if not isinstance(row, dict):
+            errors.append(f"line {lineno}: expected a JSON object")
+            continue
+        rows.append(row)
+        if isinstance(row.get("id"), str):
+            seen_ids[row["id"]] += 1
+        errors.extend(validate_row(row, present))
+
+    for rid, count in seen_ids.items():
+        if count > 1:
+            errors.append(f"duplicate id {rid!r} appears {count} times")
+
+    for area, hits in COVERAGE.items():
+        try:
+            if not any(hits(r) for r in rows):
+                errors.append(f"coverage gap: no question covers '{area}'")
+        except (KeyError, TypeError):
+            # A malformed row already produced a schema error above; skip it here.
+            pass
+
+    return errors, warnings, rows
 
 
 def main() -> None:
-    records = [json.loads(line) for line in GOLDEN_FILE.open(encoding="utf-8")]
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else GOLDEN_PATH
+    errors, warnings, rows = validate(path)
 
-    # Every record carries every field, so the runner never has to use .get()
-    for r in records:
-        missing = REQUIRED - r.keys()
-        assert not missing, f"{r.get('id')} missing fields: {missing}"
+    counts = Counter(r.get("difficulty") for r in rows)
+    scored = sum(v for k, v in counts.items() if k != "probe")
+    print(f"{path.name}: {len(rows)} rows | {scored} scored "
+          f"(easy {counts['easy']}, medium {counts['medium']}, hard {counts['hard']}) "
+          f"+ {counts['probe']} probes")
 
-    ids = [r["id"] for r in records]
-    assert len(set(ids)) == len(ids), "Duplicate IDs"
+    for w in warnings:
+        print(f"  WARN  {w}")
+    for e in errors:
+        print(f"  FAIL  {e}")
 
-    scored = [r for r in records if r["difficulty"] in SCORED_DIFFICULTIES]
-    probes = [r for r in records if r["difficulty"] == "probe"]
-
-    unknown = {r["difficulty"] for r in records} - SCORED_DIFFICULTIES - {"probe"}
-    assert not unknown, f"Invalid difficulty values: {unknown}"
-
-    assert len(scored) == 30, f"Expected 30 scored questions, got {len(scored)}"
-    assert len(probes) >= 3, f"Expected at least 3 probes, got {len(probes)}"
-
-    # Scored questions must name a clause; probes must not.
-    for r in scored:
-        assert r["expected_clause"], f"{r['id']} has no expected_clause"
-        assert r["expect_refusal"] is False, f"{r['id']} is scored but expects refusal"
-    for r in probes:
-        assert r["expected_clause"] is None, f"{r['id']} is a probe but names a clause"
-        assert r["expect_refusal"] is True, f"{r['id']} is a probe but expect_refusal is False"
-
-    difficulties = Counter(r["difficulty"] for r in scored)
-    print(f"Scored distribution: {dict(difficulties)}")
-    for level in SCORED_DIFFICULTIES:
-        assert difficulties[level] == 10, (
-            f"Expected 10 {level} questions, got {difficulties[level]}"
-        )
-
-    tags = Counter()
-    for r in records:
-        tags.update(r["tags"])
-    print(f"Top tags: {tags.most_common(8)}")
-
-    clauses = Counter(r["expected_clause"] for r in scored)
-    dupes = {c: n for c, n in clauses.items() if n > 2}
-    if dupes:
-        print(f"Note: clauses used more than twice: {dupes}")
-
-    print(f"\n{len(scored)} scored questions and {len(probes)} probes validated.")
+    if errors:
+        print(f"\nINVALID: {len(errors)} error(s)")
+        sys.exit(1)
+    print("\nVALID: schema, refusal convention, clause grounding, and 14-area coverage all pass")
 
 
 if __name__ == "__main__":
@@ -351,15 +595,57 @@ uv run python evals/validate.py
 Expected output:
 
 ```
-Scored distribution: {'easy': 10, 'medium': 10, 'hard': 10}
-Top tags: [('verification', 6), ('records', 5), ('food-safety-plan', 4), ...]
+golden.jsonl: 39 rows | 34 scored (easy 11, medium 12, hard 11) + 5 probes
 
-30 scored questions and 5 probes validated.
+VALID: schema, refusal convention, clause grounding, and 14-area coverage all pass
 ```
+
+One structural note worth copying even if your corpus is different: errors are
+*collected* and printed together, not raised on the first failure. An `assert`
+that dies on row 3 hides the other eleven problems, so you fix one, re-run, find
+the next, and spend an afternoon on what should have been one pass.
 
 ### Project: `evals/metrics.py`
 
-The deterministic metrics. No LLM call, no cost, no drift. Complete file:
+The deterministic metrics. No LLM call, no cost, no drift. Four functions matter,
+and each one is longer than the obvious version for a reason a run taught:
+
+**Clause matching is on segments, not string prefixes.** `"2.1.10".startswith("2.1.1")`
+is `True`, and this corpus has two-digit segments (`11.2.11.1`), so string
+prefixing quietly counts wrong clauses as hits. `_segments()` turns a clause into
+a tuple of ints and matching compares tuple slices, so `2.1.10` is not a child of
+`2.1.1` while `2.5.5.1` still is a child of `2.5.5`.
+
+**`expected_clause` has to be parsed.** 25 of the 34 scored records use a comma
+list or a range, and comparing that field as one literal string scores every one
+of them a miss. `parse_expected_clauses` handles all three forms, expanding
+`2.1.2.1-2.1.2.6` into the six clauses it names (and accepting the bare-end form
+`2.1.2.1-6`).
+
+**Refusal is a conjunction, not a phrase list.** The model paraphrases the
+refusal roughly a fifth of the time. Matching the literal marker alone scored
+correct refusals as failures; enumerating phrasings did not hold up either,
+because a phrase list built around "documents do not ..." missed real declines
+like *"Based on the provided excerpts, there is no minimum number of CCPs
+required."* One probe alternated between matched and unmatched wordings across
+runs of an identical config and moved the reported refusal rate 20 points with no
+behavior change - which is the kind of noise that makes an eval worse than
+useless. The fix is to require two independent things in the *opening sentence*:
+a reference to the source documents AND a negation. Either half alone is ordinary
+answer prose. Scoping to the opening is what separates a refusal from an answer
+that notes a gap after answering; the latter is incomplete, not declined.
+
+**Two reference-free metrics.** `citation_grounding` and
+`answer_cites_expected_clause` read the answer text rather than chunk metadata,
+which buys two things. They work without a golden record, so `ask.py` can attach
+them to any interactive question (Day 4). And they stay comparable across
+chunkers: `clause_hit_at_k` reads `chunk["clause"]`, so a fixed-window ablation
+that emits no clause field scores 0% no matter how good its retrieval is - it is
+measuring the absent field. That same ablation cited the right clause in 73.5% of
+its answers. Without a metric that reads the answer, you would have concluded
+fixed-window retrieval was broken rather than merely unciteable.
+
+Complete file:
 
 ```python
 """Deterministic metrics that need no judge call.
@@ -374,42 +660,387 @@ crisp definition and we want them stable across runs:
 Keeping these out of the judge makes them free, immune to judge drift, and
 usable as the primary signal when comparing retrieval strategies in Week 4.
 """
+import re
 
 # The exact phrase ask.py's system prompt instructs the model to use when the
 # retrieved context does not contain the requirement. Keep the two in sync.
 REFUSAL_MARKER = "not found in the provided documents"
 
+# The model does not always comply verbatim - it paraphrases roughly a fifth of
+# the time - so matching only the literal marker scored correct refusals as
+# failures.
+#
+# Enumerating whole phrasings does not hold up either. An earlier version of this
+# module matched only "<documents> do not <verb>", which missed two shapes the
+# corpus produces regularly:
+#
+#   "Based on the provided excerpts, there is no minimum number of CCPs required"
+#   "Based on the provided excerpts, the specific dollar amount is not stated"
+#
+# Both decline; neither puts "documents" as the subject of "do not". One probe
+# alternated between matched and unmatched phrasings across runs of an identical
+# config, moving the reported refusal rate 20 points with no behavior change.
+#
+# So match a conjunction instead of a phrase list: the sentence must both refer
+# to the source documents AND negate. Either half alone is common in a genuine
+# answer ("the documents require ...", "there is no exemption for ..."), which is
+# what keeps this from firing on answers that are merely discussing an absence.
+_SCOPE_RE = re.compile(r"(?:provided\s+)?(?:documents?|excerpts?)", re.I)
+_NEGATION_RE = re.compile(
+    r"there\s+(?:is|are)\s+no\b"
+    r"|\bis\s+not\s+(?:stated|specified|mentioned|provided|given|listed|found"
+    r"|included|addressed|defined|established)"
+    r"|\bdo(?:es)?\s+not\s+(?:specify|contain|provide|state|include|address"
+    r"|mention|define|establish)",
+    re.I,
+)
+
+
+def _opening_sentence(answer: str) -> str:
+    """The answer's first sentence, with markdown emphasis and headings removed.
+
+    Scoping the match to the opening is what separates a refusal from a partial
+    answer. Both contain decline language, but only a refusal *leads* with it:
+    an answer that cites requirements and then notes a gap ("However, the
+    excerpts do not contain ...") is incomplete, not declined, and belongs to
+    Completeness rather than to the refusal metrics.
+
+    Known limitation: a multi-part question answered in part but opening with a
+    decline for the other part reads as a refusal here. Distinguishing those
+    needs semantics, which is exactly the judge drift this module avoids.
+    """
+    for line in answer.strip().splitlines():
+        line = re.sub(r"[*_`]", "", line).strip()
+        if not line or line.startswith("#") or set(line) <= {"-", "="}:
+            continue
+        return re.split(r"(?<=[.!?])\s", line, maxsplit=1)[0]
+    return ""
+
 
 def is_refusal(answer: str) -> bool:
-    """True if the system declined to answer."""
-    return REFUSAL_MARKER in answer.lower()
+    """True if the system's top-line response declined to answer."""
+    opening = _opening_sentence(answer)
+    if REFUSAL_MARKER in opening.lower():
+        return True
+    return bool(_SCOPE_RE.search(opening) and _NEGATION_RE.search(opening))
+
+
+def _segments(clause: str) -> tuple[int, ...] | None:
+    """Clause string to integer segments, or None if it is not a clause number."""
+    parts = clause.strip().split(".")
+    if not all(p.isdigit() for p in parts) or not parts[0]:
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def _expand_range(lo: str, hi: str) -> list[tuple[int, ...]]:
+    """Expand '2.1.2.1'-'2.1.2.6' into every clause in between, inclusive.
+
+    A range's endpoints must differ only in their last segment; the bare form
+    ('2.1.2.1'-'6') is accepted too. Anything else is treated as two separate
+    clauses rather than guessed at.
+    """
+    lo_segs, hi_segs = _segments(lo), _segments(hi)
+    if lo_segs is None or hi_segs is None:
+        return [s for s in (lo_segs, hi_segs) if s is not None]
+    if len(hi_segs) == 1:                      # bare end: 2.1.2.1-6
+        hi_segs = lo_segs[:-1] + hi_segs
+    if lo_segs[:-1] != hi_segs[:-1] or hi_segs[-1] < lo_segs[-1]:
+        return [lo_segs, hi_segs]
+    prefix = lo_segs[:-1]
+    return [prefix + (n,) for n in range(lo_segs[-1], hi_segs[-1] + 1)]
+
+
+def parse_expected_clauses(expected_clause: str) -> list[tuple[int, ...]]:
+    """Every clause named by an expected_clause field, as integer segments.
+
+    The golden set writes this field three ways - a single clause ('2.1.1.1'), a
+    comma-separated list ('2.9.4.1, 2.9.7.1'), and a range ('2.1.2.1-2.1.2.6') -
+    and 25 of the 34 scored records use a list or a range. A metric that reads
+    the field as one literal string scores those as misses no matter what
+    retrieval returns, so parse it here rather than comparing raw text.
+    """
+    specs: list[tuple[int, ...]] = []
+    for part in (expected_clause or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            lo, _, hi = part.partition("-")
+            specs.extend(_expand_range(lo, hi))
+        elif (segs := _segments(part)) is not None:
+            specs.append(segs)
+    return specs
 
 
 def clause_hit_at_k(chunks: list[dict], expected_clause: str, k: int) -> bool:
-    """True if the expected clause appears among the top k retrieved chunks.
+    """True if any expected clause appears among the top k retrieved chunks.
 
-    Uses startswith so a chunk carrying 2.5.5.1 counts as a hit for an expected
-    clause of 2.5.5 - a sub-clause of the right requirement is a correct
-    retrieval, not a miss.
+    Matching is on segment boundaries, so a chunk carrying 2.5.5.1 counts as a
+    hit for an expected 2.5.5 - a sub-clause of the right requirement is a
+    correct retrieval, not a miss - while 2.1.10 does not count as a hit for
+    2.1.1. String prefixing conflates those two cases; the corpus has two-digit
+    segments (11.2.11.1), so the distinction is real.
     """
-    if not expected_clause:
+    expected = parse_expected_clauses(expected_clause)
+    if not expected:
         return False
-    return any(
-        (c.get("clause") or "").startswith(expected_clause)
-        for c in chunks[:k]
-    )
+    for c in chunks[:k]:
+        got = _segments(c.get("clause") or "")
+        if got is None:
+            continue
+        if any(got[:len(exp)] == exp for exp in expected):
+            return True
+    return False
 
 
 def retrieved_clauses(chunks: list[dict]) -> list[str]:
     """Clause numbers of the retrieved chunks, in rank order, for the CSV."""
     return [c.get("clause") or "-" for c in chunks]
+
+
+def cited_clauses(answer: str) -> list[tuple[int, ...]]:
+    """Every distinct clause the answer cites, as integer segments, in order.
+
+    Reads the answer with the same regex answer_cites_expected_clause uses, so
+    the two agree on what counts as a citation.
+    """
+    seen: list[tuple[int, ...]] = []
+    for match in _CLAUSE_IN_TEXT.finditer(answer or ""):
+        segs = _segments(match.group(1))
+        if segs and segs not in seen:
+            seen.append(segs)
+    return seen
+
+
+def citation_grounding(answer: str, chunks: list[dict]) -> float | None:
+    """Fraction of the answer's cited clauses that appear in the retrieved chunks.
+
+    The reference-free companion to the judge's citation axis. It needs no golden
+    record, so unlike the judged axes it can score an ad-hoc question, and it
+    catches the failure that matters most in a compliance corpus: an answer
+    citing a clause the model was never shown.
+
+    Matching is prefix-based in BOTH directions, because either nesting is a real
+    hit - an excerpt for 2.5.5.1 supports a citation of 2.5.5, and an excerpt for
+    2.5.5 supports a citation of its sub-clause 2.5.5.1. That is looser than
+    clause_hit_at_k, which only accepts the first direction because there the
+    expected clause is authoritative and the chunk is what gets tested.
+
+    Returns None when the answer cites nothing. That is an absence of evidence
+    rather than a score of zero: a refusal correctly cites nothing, and scoring
+    it 0.0 would drag the average down for behaving properly.
+    """
+    cited = cited_clauses(answer)
+    if not cited:
+        return None
+    available = [segs for c in chunks
+                 if (segs := _segments(c.get("clause") or "")) is not None]
+    if not available:
+        return 0.0
+    supported = sum(
+        1 for cit in cited
+        if any(cit[:len(av)] == av or av[:len(cit)] == cit for av in available)
+    )
+    return supported / len(cited)
+
+
+# Clause numbers as they appear in prose: "(source, clause 2.5.5.1, p.28)".
+_CLAUSE_IN_TEXT = re.compile(r"\b(\d+(?:\.\d+){1,4})\b")
+
+
+def answer_cites_expected_clause(answer: str, expected_clause: str) -> bool:
+    """True if the answer text itself cites one of the expected clauses.
+
+    The companion to clause_hit_at_k, and the one to reach for when comparing
+    configurations that chunk differently. clause_hit_at_k reads chunk["clause"],
+    so a chunker that does not emit that field scores 0% no matter how good its
+    retrieval is - it measures the absent field, not the retrieval. A fixed-window
+    ablation scored 0% on clause_hit_at_k while still citing the right clause in
+    73.5% of answers, because the model reads clause numbers out of the chunk text.
+
+    Reading the answer instead makes the metric chunk-size independent, at the
+    cost of no longer isolating retrieval from generation: a correct clause that
+    retrieval surfaced but the model declined to cite counts as a miss here. That
+    is the right trade for a compliance corpus, where an uncited requirement is
+    not a delivered answer.
+
+    Matching is on segment boundaries, exactly as in clause_hit_at_k.
+    """
+    expected = parse_expected_clauses(expected_clause)
+    if not expected:
+        return False
+    for match in _CLAUSE_IN_TEXT.finditer(answer or ""):
+        got = _segments(match.group(1))
+        if got and any(got[:len(exp)] == exp for exp in expected):
+            return True
+    return False
+```
+
+### Project: `evals/check_metrics.py`
+
+`metrics.py` is pure functions over text, which makes it cheap to pin down and
+expensive to get wrong quietly. A regression there does not raise; it just makes
+your system look worse, or better, than it is - and you will spend the afternoon
+looking at retrieval. This is the second of the two things that function as tests
+in this repo, and it is worth writing the same day you write the metrics.
+
+Cases are `(input, expected, why)` triples so a failure prints what broke rather
+than an index. Every refusal case below is a phrasing that actually appeared in a
+probe run, including the two that a phrase-list matcher missed and the three that
+must *not* fire.
+
+```python
+"""Regression cases for the deterministic metrics in metrics.py.
+
+Run it before trusting an eval, or after touching metrics.py:
+
+    uv run python evals/check_metrics.py
+
+Exit code is 0 when every case passes, 1 otherwise.
+
+These metrics are pure functions over text, so they are cheap to pin down and
+expensive to get wrong quietly: they carry the compliance headline for this
+corpus, and a miss does not look like a bug, it looks like a worse system. The
+refusal cases below are the specific phrasings that a phrase-list matcher missed
+in production - one probe alternated between matched and unmatched wordings
+across runs of an identical config and moved the reported rate 20 points.
+
+Cases are written as (input, expected, why) so a failure says what broke rather
+than just which index.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from evals.metrics import (answer_cites_expected_clause, clause_hit_at_k,
+                           is_refusal, parse_expected_clauses)
+
+REFUSAL_CASES = [
+    # The literal marker the system prompt asks for.
+    ("Not found in the provided documents.", True, "literal marker"),
+    ("**Not found in the provided documents.**", True, "marker behind markdown"),
+
+    # Paraphrases with "documents" as the subject of the negation.
+    ("The provided documents do not specify a minimum number of CCPs.",
+     True, "documents-do-not paraphrase"),
+    ("The excerpts do not provide the specific dollar amount of the annual fee.",
+     True, "excerpts-do-not paraphrase"),
+
+    # The two shapes a phrase-list matcher missed. Both decline; neither puts
+    # "documents" as the subject of "do not". These are verbatim from probe runs.
+    ("Based on the provided excerpts, there is no minimum number of Critical "
+     "Control Points (CCPs) required for a compliant HACCP plan.",
+     True, "scoped there-is-no"),
+    ("Based on the provided excerpts, the specific dollar amount of the annual "
+     "registration fee is not stated.",
+     True, "scoped passive negation"),
+    ("The specific annual fee amount is not found in the provided documents.",
+     True, "trailing scope"),
+
+    # Must NOT fire. A negation with no reference to the documents is ordinary
+    # answer prose - this is the half of the conjunction that guards precision.
+    ("Records must be retained for 2 years; there is no exemption for small sites.",
+     False, "unscoped negation is a real answer"),
+    ("The site must conduct internal audits annually (clause 2.5.5.1, p.28).",
+     False, "plain answer"),
+    ("The documents require a documented HACCP plan (clause 2.4.3, p.12).",
+     False, "documents referenced without negation"),
+
+    # Scoping to the opening sentence is what separates a refusal from an
+    # answer that notes a gap after answering. Both contain decline language.
+    ("Verification must be scheduled annually (clause 2.5.2, p.14). However, the "
+     "excerpts do not specify who signs off.",
+     False, "decline after answering is incomplete, not refused"),
+]
+
+CITES_CASES = [
+    ("The site must audit annually (SQF Code, clause 2.5.5.1, p.28).",
+     "2.5.5.1", True, "exact match"),
+    ("Corrective action is required (clause 2.5.3.2, p.19).",
+     "2.5.3", True, "sub-clause satisfies a parent expectation"),
+    ("See clause 2.1.10 for details.",
+     "2.1.1", False, "2.1.10 is not a child of 2.1.1"),
+    ("Both 2.9.4.1 and 2.9.7.1 apply.",
+     "2.9.4.1, 2.9.7.1", True, "comma list in expected_clause"),
+    ("Clause 2.1.2.4 covers this.",
+     "2.1.2.1-2.1.2.6", True, "range in expected_clause"),
+    ("Not found in the provided documents.",
+     "2.5.5.1", False, "refusal cites nothing"),
+    ("The requirement is in clause 11.2.11.1.",
+     "11.2.11", True, "two-digit segments"),
+    ("Clause 2.5.5.1 applies.", "", False, "no expectation to satisfy"),
+]
+
+# hit@k reads chunk metadata; a chunker that emits no clause field scores 0
+# regardless of what it retrieved. Pinned because that behavior is the whole
+# reason answer_cites_expected_clause exists.
+HIT_CASES = [
+    ([{"clause": "2.5.5.1"}], "2.5.5", 1, True, "sub-clause hits parent"),
+    ([{"clause": "2.1.10"}], "2.1.1", 1, False, "segment boundary respected"),
+    ([{"clause": None}, {"clause": "2.5.5"}], "2.5.5", 1, False, "outside top k"),
+    ([{"clause": None}, {"clause": "2.5.5"}], "2.5.5", 3, True, "inside top k"),
+    ([{"clause": None}], "2.5.5", 5, False, "clause-blind chunk cannot hit"),
+]
+
+
+def main() -> None:
+    failures = []
+
+    for text, expected, why in REFUSAL_CASES:
+        got = is_refusal(text)
+        if got != expected:
+            failures.append(f"is_refusal({why}): expected {expected}, got {got}\n"
+                            f"      {text[:90]}")
+
+    for answer, clause, expected, why in CITES_CASES:
+        got = answer_cites_expected_clause(answer, clause)
+        if got != expected:
+            failures.append(
+                f"answer_cites_expected_clause({why}): expected {expected}, got {got}\n"
+                f"      answer={answer[:70]!r} expected_clause={clause!r}")
+
+    for chunks, clause, k, expected, why in HIT_CASES:
+        got = clause_hit_at_k(chunks, clause, k)
+        if got != expected:
+            failures.append(f"clause_hit_at_k({why}): expected {expected}, got {got}")
+
+    # The parser underneath both clause metrics; 25 of 34 golden records use a
+    # list or a range, so a silent regression here mis-scores most of the set.
+    if parse_expected_clauses("2.1.2.1-2.1.2.6") != [(2, 1, 2, n) for n in range(1, 7)]:
+        failures.append("parse_expected_clauses: range expansion broken")
+    if parse_expected_clauses("2.1.2.1-6") != [(2, 1, 2, n) for n in range(1, 7)]:
+        failures.append("parse_expected_clauses: bare-end range expansion broken")
+
+    total = len(REFUSAL_CASES) + len(CITES_CASES) + len(HIT_CASES) + 2
+    if failures:
+        print(f"metrics: {len(failures)} of {total} cases FAILED\n")
+        for f in failures:
+            print(f"  FAIL  {f}")
+        sys.exit(1)
+    print(f"metrics: all {total} cases pass")
+
+
+if __name__ == "__main__":
+    main()
 ```
 
 ```bash
 uv run python evals/validate.py
-git add evals/golden.jsonl evals/validate.py evals/metrics.py
-git commit -m "Week 3 Day 2: 30-question SQF golden set, 5 refusal probes, deterministic metrics"
+# golden.jsonl: 39 rows | 34 scored (easy 11, medium 12, hard 11) + 5 probes
+uv run python evals/check_metrics.py
+# metrics: all 26 cases pass
+
+git add evals/golden.jsonl evals/validate.py evals/metrics.py evals/check_metrics.py
+git commit -m "Week 3 Day 2: 34-question SQF golden set, 5 refusal probes, deterministic metrics"
 ```
+
+There is no pytest suite in this project, and these two scripts are why that is
+defensible rather than lazy. Both are plain scripts with meaningful exit codes,
+both run in under a second, and between them they cover the two things that can
+silently corrupt every number downstream: a malformed golden set and a metric
+that scores the wrong thing. Run both after touching `metrics.py` or
+`golden.jsonl`.
 
 ---
 
@@ -462,13 +1093,14 @@ becomes a no-op and the app runs exactly as before, just untraced. So importing
 this module is always safe, with or without a Langfuse account - which is why
 the instrumentation can be written in Week 3 and switched on in Week 4.
 
-If they are present but wrong, the credentials are checked once here rather than
-discovered span by span, and TRACING_ENABLED says which of the three states this
-process is in: keys absent, keys broken, or tracing live.
+If they are present but wrong, the credentials are checked once here rather
+than discovered span by span, and TRACING_ENABLED says which of the three
+states this process is in: keys absent, keys broken, or tracing live.
 
 The decorated functions live in ask.py, evals/judge.py and evals/run_eval.py.
 This module only owns client construction, so there is a single place that tags
-every trace with the git commit (release).
+every trace with the git commit (release). That is what lets you compare quality
+across versions in the Langfuse UI.
 """
 import logging
 import os
@@ -500,13 +1132,16 @@ def _auth_ok(host: str, public_key: str, secret_key: str) -> bool | None:
     """Do these credentials work? True/False, or None if the server was unreachable.
 
     Checked once at startup rather than left to the first span, because the SDK
-    exports in a background batch: a bad key surfaces as a per-span 401 on stderr
-    that no caller ever sees, so a long run happily finishes having sent nothing.
+    exports in a background batch: a bad key surfaces as a per-span 401 on
+    stderr that no caller ever sees the return value of, so a long run happily
+    finishes having sent nothing. One request here converts that into a single
+    message before any work begins.
     """
     try:
         response = requests.get(
             f"{host.rstrip('/')}/api/public/projects",
-            auth=(public_key, secret_key), timeout=5,
+            auth=(public_key, secret_key),
+            timeout=5,
         )
     except requests.RequestException:
         return None
@@ -517,6 +1152,9 @@ _TRACING_ON = bool(os.environ.get("LANGFUSE_PUBLIC_KEY"))
 AUTH_OK: bool | None = None
 
 if _TRACING_ON:
+    # The SDK reads release/environment from env vars at client construction, so
+    # set sensible defaults before get_client() builds the process-wide
+    # singleton. We don't overwrite values the user set explicitly.
     os.environ.setdefault("LANGFUSE_TRACING_ENVIRONMENT", "development")
     _release = _git_release()
     if _release:
@@ -529,19 +1167,28 @@ if _TRACING_ON:
     if AUTH_OK is not True:
         _reason = ("could not reach the server"
                    if AUTH_OK is None else "the server rejected the credentials")
+        _key = os.environ["LANGFUSE_PUBLIC_KEY"]
         print(
             "\n" + "=" * 72 + "\n"
             f"LANGFUSE TRACING DISABLED - {_reason}.\n"
             f"  host: {_host}\n"
+            f"  key:  {_key[:14]}...\n"
+            "\n"
             "Everything else still runs; only tracing is off. Fix the LANGFUSE_*\n"
-            "values in .env (see .env.example) and re-run.\n"
+            "values in .env (see .env.example) and re-run. The secret key is shown\n"
+            "once at creation and stored only as a hash - if it is lost, issue a\n"
+            "new pair in the Langfuse UI under Settings -> API Keys.\n"
             + "=" * 72 + "\n",
             file=sys.stderr,
         )
         # Switch the SDK off outright instead of letting it retry every span.
+        # Read at construction, so it has to be set before get_client() below.
         os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
         logging.getLogger("langfuse").setLevel(logging.CRITICAL)
 else:
+    # No credentials: the SDK still runs but every span/update would otherwise
+    # log an auth/no-span warning per call. Silence that so untraced runs stay
+    # quiet - the @observe spans become harmless no-ops.
     logging.getLogger("langfuse").setLevel(logging.CRITICAL)
 
 # get_client() builds (or returns) the singleton from the LANGFUSE_* env vars.
@@ -583,6 +1230,23 @@ the rest is fine.
 To score those two, the judge needs to see the retrieved context, not just the
 answer. That is why `judge()` below takes a `chunks` argument.
 
+### Concept: one defect, one axis
+
+Five axes only tell you where a problem is if each defect is deducted exactly
+once. Left to itself the judge double-counts: a wrong clause number reads as a
+Citation defect *and* a Grounding defect *and* a Factual defect, so one mistake
+moves three axes and the per-axis breakdown stops locating anything. The rubric
+below assigns ownership explicitly - a wrong clause or page belongs to Citation
+Correctness alone, omitted key points to Completeness alone - and asks the judge
+to re-read its own scores and strip duplicated deductions before submitting.
+
+Two related sharpenings, each of which moved real scores. Completeness now
+requires listing the reference's key points *before* counting them, because a
+judge scanning for general thoroughness rewards a long confident answer that
+covers half the reference. And Grounding now scores claim *content* only, with
+citation labels explicitly out of scope, since a correctly-supported requirement
+attached to the wrong clause number is one defect, not two.
+
 ### Project: `evals/judge.py`
 
 Complete file:
@@ -617,9 +1281,10 @@ each one on its own and do not let a low score on one drag down the others. Judg
 the answer as a response to THIS question - a statement that is true in isolation
 but says nothing about what was asked earns no credit.
 
-FACTUAL CORRECTNESS - are the claims the answer actually makes correct?
-Judge only the claims present; missing points are handled under Completeness, and
-a terse-but-correct answer still scores 5 here.
+FACTUAL CORRECTNESS - are the substantive claims the answer actually makes correct?
+Judge only the claims present. Missing points are handled under Completeness, a
+wrong clause number or page is handled under Citation Correctness, and a
+terse-but-correct answer still scores 5 here.
   5 = Every claim is accurate. No false or misleading statements.
   4 = Accurate apart from one minor imprecision that would not mislead a practitioner.
   3 = Mostly correct but contains one significant inaccuracy someone could act on wrongly.
@@ -629,6 +1294,11 @@ a terse-but-correct answer still scores 5 here.
       when the requirement is annual).
 
 COMPLETENESS - how many of the reference answer's key points are covered?
+Count only content that matches a key point in the reference. Material the
+reference does not ask for never raises this score, however detailed or
+confident it is, and an invented requirement never substitutes for a key point
+the answer omitted. First list the reference's key points, then count how many
+the answer covers, then pick the band.
   5 = Covers every key point in the reference (extra correct detail is fine).
   4 = Covers all but one key point.
   3 = Covers roughly half the key points.
@@ -655,7 +1325,12 @@ requirement it states? Check the cited clause against the excerpts.
 A confident, well-written answer that cites the wrong clause scores 1-2 here. Do
 not let good prose lift this score.
 
-GROUNDING - is every claim supported by the excerpts, with nothing invented?
+GROUNDING - is every substantive claim supported by the excerpts, with nothing
+invented? Score the content of the claims only. Citation labels - clause numbers,
+page numbers, source filenames - are not claims on this axis. A requirement the
+excerpts do support scores 5 here even when it is attached to the wrong clause
+reference; pointing at the wrong clause is a Citation Correctness defect and must
+not be deducted twice.
   5 = Every claim traces to the excerpts. Nothing added from outside knowledge.
   4 = Fully supported apart from one harmless general statement.
   3 = Mostly supported, but one claim goes beyond what the excerpts say.
@@ -666,6 +1341,11 @@ GROUNDING - is every claim supported by the excerpts, with nothing invented?
 Any fabricated specific caps this axis at 2 regardless of how much else is right.
 
 Calibration:
+  - Each defect is scored once, on the axis that owns it. A wrong clause or page
+    is a Citation Correctness defect only. Omitted key points are a Completeness
+    defect only. An invented requirement is a Grounding and Factual Correctness
+    defect. Before submitting, re-read your scores and remove any deduction you
+    made on an axis for a defect another axis already owns.
   - A fully correct answer MUST score 5 on the axes it satisfies. Do not withhold
     5 to seem strict, and do not force a 3-4 "average" - accuracy matters, not a
     target distribution.
@@ -857,7 +1537,22 @@ keeps them cheap and keeps refusal a clean binary.
 The Week 2 version returns only the answer text. The judge needs the retrieved
 chunks too. This complete file adds `answer_question_with_context`, keeps
 `answer_question` for the CLI, adds Langfuse instrumentation (inert until Week 4),
-and adds the strategy switch that Weeks 4 Days 10-11 will use.
+adds `_score_answer` so every answer carries a quality signal, and adds the
+strategy switch that Weeks 4 Days 10-11 will use.
+
+`_score_answer` is the piece worth pausing on. Everything the judge produces
+needs a reference answer, which only exists for the 39 golden records - so an
+interactive question came back with an empty Scores tab in Langfuse, and the
+system you actually use day to day was the one you had no measurements of. The
+two reference-free metrics from Day 2 need nothing but the answer and the context
+it was given, so they run on *every* answer, eval or not.
+
+Note that it records `refusal` raw rather than as pass/fail. A refusal is correct
+behavior on a question the corpus does not cover and a defect on one it does, and
+`ask.py` has no idea which this was. `run_eval.py` does, because it holds the
+golden record, and scores that judgement separately as `appropriate_refusal`.
+Resisting the urge to collapse the two here is what keeps the interactive score
+meaningful.
 
 Replace `ask.py` entirely with:
 
@@ -869,16 +1564,22 @@ import sys
 from anthropic import Anthropic
 from langfuse import observe, propagate_attributes
 
+# The two metrics here are the reference-free ones: they need no golden record
+# and no judge call, so they can run on any answer. The judged axes stay in the
+# eval harness, which is the only place a reference answer exists.
+from evals.metrics import citation_grounding, is_refusal
 # Importing tracing constructs the Langfuse client from the LANGFUSE_* env vars.
 # If those are unset the SDK disables itself and every @observe below is a no-op.
 from tracing import langfuse
 
 # Retrieved chunks per question. 14 rather than 5 because clause chunks are
-# small (~690 chars): at k=5 the model saw ~3.4K chars and completeness was
-# the weakest axis. A 5/10/14 sweep moved it 3.85 -> 4.09 -> 4.24 (paired
-# sign test p=0.013) with clause citation flat at 97%. Not higher: relevance
-# falls monotonically over the same sweep as tangential excerpts dilute the
-# answer. 14 is the knee, not a ceiling. Env-overridable so the eval can sweep it.
+# small (~690 chars): at k=5 the model saw ~3.4K chars and completeness was the
+# weakest axis by a wide margin. A 5/10/14 sweep moved it 3.85 -> 4.09 -> 4.24
+# (paired sign test p=0.013) with clause citation flat at 97%.
+#
+# Not higher: relevance falls monotonically over the same sweep (4.50 -> 4.29)
+# as tangential excerpts dilute the answer, and context tokens scale with k on
+# both the answer and judge calls. 14 is the knee, not a ceiling to raise.
 TOP_K = int(os.getenv("TOP_K", "14"))
 LLM_MODEL = "claude-sonnet-4-6"
 
@@ -985,6 +1686,35 @@ def generate(prompt: str) -> str:
     return answer
 
 
+def _score_answer(answer: str, chunks: list[dict]) -> None:
+    """Attach the reference-free scores to the current trace.
+
+    Runs on every answer, which is the point: the judged axes in run_eval.py
+    need a reference answer, so an interactive question could never carry a
+    quality signal and its Scores tab came up empty. These two need only the
+    answer and the context it was given.
+
+    Both are deliberately raw rather than pass/fail. `refusal` is correct
+    behavior on a question the corpus does not cover and a defect on one it
+    does, and nothing here knows which this was - run_eval.py has the golden
+    record and scores that judgement separately as `appropriate_refusal`.
+    """
+    langfuse.score_current_trace(
+        name="refusal",
+        value=1 if is_refusal(answer) else 0,
+        comment="1 = the answer declined to answer",
+    )
+    grounded = citation_grounding(answer, chunks)
+    # None means the answer cited nothing, so there is nothing to be right or
+    # wrong about. Recording 0.0 there would punish a clean refusal.
+    if grounded is not None:
+        langfuse.score_current_trace(
+            name="citation_grounding",
+            value=round(grounded, 3),
+            comment="fraction of cited clauses that appear in the retrieved excerpts",
+        )
+
+
 @observe(name="rag-answer")
 def answer_question_with_context(query: str) -> tuple[str, list[dict]]:
     """Run the full pipeline and return the answer AND the chunks it used.
@@ -995,7 +1725,10 @@ def answer_question_with_context(query: str) -> tuple[str, list[dict]]:
     """
     chunks = retrieve(query)
     prompt = assemble_prompt(query, chunks)
-    return generate(prompt), chunks
+    answer = generate(prompt)
+    # Scored inside the span so score_current_trace has a trace to attach to.
+    _score_answer(answer, chunks)
+    return answer, chunks
 
 
 def answer_question(query: str) -> str:
@@ -1029,6 +1762,24 @@ uv run python ask.py "How often must internal audits be conducted?"
 
 ### Project: `evals/run_eval.py`
 
+Three details in this file are not obvious the first time and each one came from
+a run that went wrong:
+
+- **The refuse-to-start guard.** If `LANGFUSE_PUBLIC_KEY` is set but tracing did
+  not come up, the run exits before the first API call. Absent credentials mean
+  a deliberate untraced run and are fine; *broken* credentials mean someone
+  meant to trace this and won't find out until they go looking for the traces.
+  The CSV is only written after the loop completes, so discovering it halfway
+  through costs the whole run either way. Bail on record 0, not record 20.
+- **`dropped` tracking.** A record whose RAG or judge call raised is excluded
+  from the summary's denominator - which means without this, a run where six
+  questions errored prints the same clean-looking averages as one where none
+  did, computed over a quietly smaller set. The summary now names what it lost
+  before it reports anything.
+- **The `cites_expected` column.** `answer_cites_expected_clause` alongside
+  `hit@k`, for the reason given on Day 2: the two read different things, and
+  when they disagree that disagreement is the finding.
+
 Complete file:
 
 ```python
@@ -1045,9 +1796,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from ask import answer_question_with_context
 
 from evals.judge import judge
-from evals.metrics import clause_hit_at_k, is_refusal, retrieved_clauses
+from evals.metrics import (answer_cites_expected_clause, clause_hit_at_k,
+                           is_refusal, retrieved_clauses)
 from langfuse import propagate_attributes
-from tracing import langfuse
+from tracing import TRACING_ENABLED, langfuse
 
 # The five judge axes, mapped to the score names they get in Langfuse.
 SCORE_AXES = (
@@ -1055,9 +1807,9 @@ SCORE_AXES = (
     "citation_correctness", "grounding",
 )
 
-GOLDEN_FILE = Path("evals/golden.jsonl")
-RESULTS_DIR = Path("evals/results")
-RESULTS_DIR.mkdir(exist_ok=True)
+GOLDEN_FILE = Path(__file__).resolve().parent / "golden.jsonl"
+RESULTS_DIR = Path(__file__).resolve().parent / "results"
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Every row carries every column so the CSV is rectangular even though probe
 # rows have no judge scores.
@@ -1065,7 +1817,7 @@ FIELDNAMES = [
     "id", "difficulty", "tags", "question", "expected_clause",
     "system_answer", "refused",
     "factual", "complete", "relevant", "citation", "grounding", "overall",
-    "hit_1", "hit_3", "hit_5", "top_clauses",
+    "hit_1", "hit_3", "hit_5", "cites_expected", "top_clauses",
     "reasoning", "elapsed_sec",
 ]
 
@@ -1081,7 +1833,7 @@ def _blank_row(rec: dict) -> dict:
         "refused": "",
         "factual": "", "complete": "", "relevant": "",
         "citation": "", "grounding": "", "overall": "",
-        "hit_1": "", "hit_3": "", "hit_5": "",
+        "hit_1": "", "hit_3": "", "hit_5": "", "cites_expected": "",
         "top_clauses": "",
         "reasoning": "",
         "elapsed_sec": "",
@@ -1094,6 +1846,15 @@ def run_eval(run_name: str, config_notes: str = "", limit: int | None = None) ->
     If `limit` is set, only the first N golden records are run - handy for cheap
     smoke tests that stay under the Voyage free-tier rate limit.
     """
+    # Credentials set but not working means someone meant to trace this run.
+    # Bail now rather than after 39 records of API spend: the CSV is only
+    # written once the loop completes, so a run discovered to be untraced
+    # halfway through is a total loss either way. Absent credentials are a
+    # deliberate untraced run and stay allowed.
+    if os.environ.get("LANGFUSE_PUBLIC_KEY") and not TRACING_ENABLED:
+        sys.exit("Refusing to start: Langfuse credentials are set but not working, "
+                 "so this run would produce no traces. See the message above.")
+
     records = [json.loads(line) for line in GOLDEN_FILE.open(encoding="utf-8")]
     total = len(records)
     if limit is not None:
@@ -1107,6 +1868,9 @@ def run_eval(run_name: str, config_notes: str = "", limit: int | None = None) ->
     strategy = os.getenv("RETRIEVAL_STRATEGY", "vanilla")
 
     rows: list[dict] = []
+    # A record that errors is not in the summary's denominator, so a partial run
+    # would otherwise read as a clean one. Track the losses and report them.
+    dropped: dict[str, list[str]] = {"rag": [], "judge": []}
     scope = f"{len(records)} of {total}" if limit is not None else str(total)
     print(f"Running eval: {run_name} ({scope} records, strategy={strategy})")
     if config_notes:
@@ -1130,6 +1894,7 @@ def run_eval(run_name: str, config_notes: str = "", limit: int | None = None) ->
             except Exception as e:
                 langfuse.update_current_span(level="ERROR", status_message=f"RAG: {e}")
                 print(f"  {i:2d}/{len(records)} {rec['id']} RAG ERROR: {e}")
+                dropped["rag"].append(rec["id"])
                 continue
 
             refused = is_refusal(system_answer)
@@ -1164,6 +1929,11 @@ def run_eval(run_name: str, config_notes: str = "", limit: int | None = None) ->
 
             hits = {k: clause_hit_at_k(chunks, rec["expected_clause"], k) for k in (1, 3, 5)}
             row["hit_1"], row["hit_3"], row["hit_5"] = hits[1], hits[3], hits[5]
+            # Recorded alongside hit@k because the two disagree in a way that
+            # matters: hit@k reads chunk metadata, this reads the answer, so it
+            # stays comparable across configurations that chunk differently.
+            row["cites_expected"] = answer_cites_expected_clause(
+                system_answer, rec["expected_clause"])
 
             try:
                 scores = judge(rec["question"], rec["reference_answer"],
@@ -1171,6 +1941,7 @@ def run_eval(run_name: str, config_notes: str = "", limit: int | None = None) ->
             except Exception as e:
                 langfuse.update_current_span(level="ERROR", status_message=f"JUDGE: {e}")
                 print(f"  {i:2d}/{len(records)} {rec['id']} JUDGE ERROR: {e}")
+                dropped["judge"].append(rec["id"])
                 rows.append(row)
                 continue
 
@@ -1213,7 +1984,7 @@ def run_eval(run_name: str, config_notes: str = "", limit: int | None = None) ->
         writer.writerows(rows)
 
     print(f"\nResults written: {out_file}\n")
-    print_summary(rows)
+    print_summary(rows, dropped)
 
     # Force-send buffered traces and scores before the script exits.
     langfuse.flush()
@@ -1222,10 +1993,18 @@ def run_eval(run_name: str, config_notes: str = "", limit: int | None = None) ->
     return out_file
 
 
-def print_summary(rows: list[dict]) -> None:
+def print_summary(rows: list[dict], dropped: dict[str, list[str]] | None = None) -> None:
     """Print the compliance metrics first, then the judged axes."""
     scored = [r for r in rows if r["difficulty"] != "probe" and r["overall"] != ""]
     probes = [r for r in rows if r["difficulty"] == "probe"]
+
+    dropped = dropped or {}
+    if any(dropped.values()):
+        print("=== Dropped (excluded from every figure below) ===")
+        for stage, ids in dropped.items():
+            if ids:
+                print(f"  {stage} errors: {len(ids)}  ({', '.join(ids)})")
+        print()
 
     def avg(field, subset):
         return sum(float(r[field]) for r in subset) / len(subset)
@@ -1246,6 +2025,7 @@ def print_summary(rows: list[dict]) -> None:
     print(f"  clause hit@1:       {pct('hit_1', scored):.0f}%")
     print(f"  clause hit@3:       {pct('hit_3', scored):.0f}%")
     print(f"  clause hit@5:       {pct('hit_5', scored):.0f}%")
+    print(f"  cites expected:     {pct('cites_expected', scored):.0f}%")
     print(f"  False refusals:     {false_refusals}/{len(scored)}")
 
     print(f"\n=== Judged axes (n={len(scored)}) ===")
@@ -1302,34 +2082,41 @@ git commit -m "Week 3 Day 4: eval runner with clause-hit and refusal metrics"
 ### Run the baseline
 
 ```bash
-uv run python evals/run_eval.py baseline "vanilla cosine, top_k=5, clause chunking"
+TOP_K=5 uv run python evals/run_eval.py baseline "vanilla cosine, top_k=5, clause chunking"
 ```
 
-Roughly 6-10 minutes and about $1: 35 RAG calls plus 30 judge calls, sequential.
-Output looks like:
+39 records: 39 RAG calls plus 34 judge calls, sequential. Budget about 15
+minutes - the wall clock is dominated by the Voyage free tier's 3 requests/minute
+on the query embedding, not by Claude.
+
+Output looks like this. **The numbers below are illustrative** - a deliberately
+mediocre first run, not this project's measured results. Your own first run is
+the only baseline that means anything, and `EVAL_REPORT.md` is where the real
+figures live.
 
 ```
-Running eval: baseline (35 records, strategy=vanilla)
+Running eval: baseline (39 records, strategy=vanilla)
 Config: vanilla cosine, top_k=5, clause chunking
 
-   1/35 Q001 [easy  ] F=5 C=4 R=5 Cite=5 G=5 avg=4.80 hit@3=Y
-   2/35 Q002 [easy  ] F=4 C=3 R=5 Cite=3 G=4 avg=3.80 hit@3=Y
-   3/35 Q003 [medium] F=3 C=2 R=4 Cite=2 G=3 avg=2.80 hit@3=n
+   1/39 sys-elements-e1     [easy  ] F=5 C=4 R=5 Cite=5 G=5 avg=4.80 hit@3=Y
+   2/39 sys-elements-m1     [medium] F=4 C=3 R=5 Cite=3 G=4 avg=3.80 hit@3=Y
+   3/39 sys-elements-h1     [hard  ] F=3 C=2 R=4 Cite=2 G=3 avg=2.80 hit@3=n
    ...
-  31/35 P001 [probe ] REFUSED (pass)
-  32/35 P002 [probe ] ANSWERED (FAIL)
+  35/39 probe-finished-product-micro-limit [probe ] REFUSED (pass)
+  36/39 probe-iso-22000-team-leader        [probe ] ANSWERED (FAIL)
   ...
 
 === Refusal probes (n=5) ===
   Correctly refused:  4/5  (80%)
 
-=== Retrieval (n=30) ===
+=== Retrieval (n=34) ===
   clause hit@1:       43%
   clause hit@3:       67%
   clause hit@5:       73%
-  False refusals:     2/30
+  cites expected:     71%
+  False refusals:     2/34
 
-=== Judged axes (n=30) ===
+=== Judged axes (n=34) ===
   Citation:   3.53
   Grounding:  4.07
   Factual:    3.87
@@ -1339,7 +2126,11 @@ Config: vanilla cosine, top_k=5, clause chunking
 ```
 
 That is your baseline. Read it in the order the summary prints it, which is
-deliberate: refusal behavior first, then retrieval, then answer quality.
+deliberate: anything dropped first, then refusal behavior, then retrieval, then
+answer quality. A `Dropped` block above the probes means those records errored
+and are in none of the figures below it - fix that before reading anything else,
+because every average printed under it was computed over a smaller set than you
+think.
 
 ### Read the failures
 
@@ -1379,8 +2170,23 @@ from pathlib import Path
 
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from evals.metrics import answer_cites_expected_clause, is_refusal
+
 AXES = ["citation", "grounding", "factual", "complete", "relevant", "overall"]
 HITS = ["hit_1", "hit_3", "hit_5"]
+
+RESULTS_DIR = Path(__file__).resolve().parent / "results"
+
+
+def _latest_results() -> Path:
+    """Newest results CSV, or exit with a usable message if there are none."""
+    csvs = sorted(RESULTS_DIR.glob("*.csv"))
+    if not csvs:
+        sys.exit(f"No result CSVs in {RESULTS_DIR}. "
+                 f"Run 'uv run python evals/run_eval.py' first, "
+                 f"or pass a CSV path explicitly.")
+    return csvs[-1]
 
 
 def _split(csv_path: str):
@@ -1400,8 +2206,29 @@ def _hit_rate(df: pd.DataFrame, col: str) -> float:
 
 
 def _refusal_rate(df: pd.DataFrame) -> float:
-    vals = df["refused"].map(lambda v: str(v).lower() == "true")
-    return 100.0 * vals.mean() if len(df) else float("nan")
+    """Recomputed from the answer text, not read from the stored column.
+
+    Both derived metrics are pure functions of text the CSV already holds, so
+    recomputing costs nothing and means a run scored under an older, buggier
+    metric reports correctly without being re-run. That matters here: the
+    refusal regex was widened after five runs had already been scored, and the
+    `refused` column in those files understates the true rate by up to 40 points.
+    """
+    if not len(df):
+        return float("nan")
+    return 100.0 * df["system_answer"].map(lambda a: is_refusal(str(a))).mean()
+
+
+def _cites_rate(df: pd.DataFrame) -> float:
+    """Share of answers citing an expected clause. See metrics.py for why this
+    is the metric to compare across different chunking strategies."""
+    if not len(df):
+        return float("nan")
+    vals = df.apply(
+        lambda r: answer_cites_expected_clause(str(r["system_answer"]),
+                                               str(r["expected_clause"])),
+        axis=1)
+    return 100.0 * vals.mean()
 
 
 def summarize(csv_path: str) -> None:
@@ -1420,6 +2247,8 @@ def summarize(csv_path: str) -> None:
     print("\nClause hit rate:")
     for col in HITS:
         print(f"  {col}: {_hit_rate(scored, col):5.1f}%")
+    print(f"  cites expected: {_cites_rate(scored):5.1f}%  "
+          f"(comparable across chunking strategies)")
 
     print("\nAverage by axis:")
     print(scored[AXES].mean().round(2).to_string())
@@ -1458,6 +2287,9 @@ def compare(baseline_csv: str, variant_csv: str) -> None:
         av, bv = _hit_rate(a, col), _hit_rate(b, col)
         print(f"  {col:13s} baseline={av:5.1f}%  variant={bv:5.1f}%  "
               f"delta={bv-av:+.1f}")
+    av, bv = _cites_rate(a), _cites_rate(b)
+    print(f"  {'cites expected':13s} baseline={av:5.1f}%  variant={bv:5.1f}%  "
+          f"delta={bv-av:+.1f}")
 
     print("\nJudged axes (variant - baseline):")
     for col in AXES:
@@ -1498,6 +2330,9 @@ def compare_three(vanilla_csv: str, hybrid_csv: str, rerank_csv: str) -> None:
         vm, hm, rm = (_hit_rate(f, col) for f in (v, h, r))
         print(f"{col + ' %':16s}  {vm:>9.1f}  {hm:>9.1f}  {rm:>9.1f}  "
               f"{hm-vm:>+7.1f}  {rm-vm:>+7.1f}")
+    vm, hm, rm = (_cites_rate(f) for f in (v, h, r))
+    print(f"{'cites expected %':16s}  {vm:>9.1f}  {hm:>9.1f}  {rm:>9.1f}  "
+          f"{hm-vm:>+7.1f}  {rm-vm:>+7.1f}")
 
     print()
     for col in AXES:
@@ -1534,9 +2369,17 @@ if __name__ == "__main__":
     elif len(args) == 1:
         summarize(args[0])
     else:
-        latest = sorted(Path("evals/results").glob("*.csv"))[-1]
-        summarize(str(latest))
+        summarize(str(_latest_results()))
 ```
+
+Two things in here are worth copying regardless of corpus. `_refusal_rate` and
+`_cites_rate` are **recomputed from `system_answer`** rather than read out of the
+stored columns. Both are pure functions of text the CSV already holds, so it
+costs nothing - and it means a run scored under an older, buggier metric reports
+correctly without being re-run. That is not hypothetical: the refusal regex was
+widened after five runs had already been scored, and the `refused` column in
+those files understates the true rate by up to 40 points. Recomputation turned a
+re-run-everything problem into a no-op.
 
 ```bash
 uv run python evals/analyze.py
@@ -1633,7 +2476,8 @@ standard axes do not catch that failure.
 
 <N> SQF documents (PDF and DOCX, <M> of them scanned and OCRed), chunked on
 clause boundaries rather than a fixed window, yielding <K> chunks indexed in
-Chroma with clause, page, module and doc_type metadata.
+Chroma with clause, page, module and doc_type metadata. Clause attribution:
+<n> chunks from a header in the text, <n> from the filename, <n> with no clause.
 
 ## Baseline configuration
 
@@ -1649,10 +2493,11 @@ Compliance metrics:
 | Metric | Value |
 |---|---|
 | Probe refusal rate | <n>/<5> |
-| False refusal rate (scored) | <n>/30 |
+| False refusal rate (scored) | <n>/34 |
 | clause hit@1 | <n>% |
 | clause hit@3 | <n>% |
 | clause hit@5 | <n>% |
+| Answer cites expected clause | <n>% |
 
 Judged axes:
 
@@ -1706,8 +2551,8 @@ to the validity of these numbers.
 
 ## What I'd do next
 
-1. Second-reader review of the 30 reference answers and expected clauses
-2. Larger golden set (100+) for more stable averages
+1. Second-reader review of the 34 reference answers and expected clauses
+2. Larger golden set (100+) for more stable averages, and more than 5 probes
 3. Multiple runs per config to estimate judge variance
 4. Hybrid retrieval and reranking (Week 4)
 5. Separate the retrieval metric from the generation metric fully, so a failure
@@ -1718,10 +2563,20 @@ Fill in real numbers. Keep it honest. The "what this didn't measure" section is
 what distinguishes a real engineer's eval report from theater, and the note about
 unreviewed reference answers is the most credible sentence in the document.
 
+Two additions this project's finished `EVAL_REPORT.md` grew that are worth
+planning for. First, **a judge-variance section**: two runs of the identical
+configuration against the identical index, a day apart, to establish the noise
+floor before interpreting any delta. Without it you have no basis for calling a
+0.05 movement a result. Second, **a "defect found and fixed" section**. You will
+find a metric bug partway through, and the honest move is to say what it was,
+what it cost, and what pins it now - not to quietly re-run and report the clean
+numbers.
+
 ### Week 3 Wrap-up Checklist
 
-- [ ] 30 scored questions and 5 probes in `evals/golden.jsonl`, all with real clause numbers from your documents
-- [ ] `validate.py` passes
+- [ ] Scored questions and 5 probes in `evals/golden.jsonl`, all with real clause numbers from your documents, covering every requirement area
+- [ ] `validate.py` passes (schema, refusal convention, clause grounding, coverage)
+- [ ] `check_metrics.py` passes
 - [ ] Judge calibration tests separate correct / wrong-clause / fabricated cases
 - [ ] Baseline run complete, CSV in `evals/results/`
 - [ ] One variant run and compared
@@ -1870,6 +2725,11 @@ cover different failures:
   retry   - recover anyway when a limit is hit, since pacing cannot account for
             other processes sharing the same API key
 
+Pacing is the one that carries a full eval. A 39-record run paces to about 2.6
+calls/min and finishes in ~15 minutes with no rejected call. Drop it and the
+run bursts straight past the limit, then every call pays an unpredictable
+backoff instead of a predictable interval.
+
 Set VOYAGE_MIN_INTERVAL_SEC=0 to disable pacing once the account has a payment
 method and standard rate limits.
 """
@@ -1891,9 +2751,9 @@ MIN_INTERVAL_SEC = float(os.getenv("VOYAGE_MIN_INTERVAL_SEC", "21"))
 
 # Transient by nature: waiting and retrying is the correct response. Auth and
 # malformed-request errors are deliberately absent - retrying those just turns a
-# clear failure into a slow one. Matching on the exception TYPE, not on substrings
-# of its message, so a server error is not misread as throttling because its text
-# happened to contain a number.
+# clear failure into a slow one. Matching on the exception type rather than on
+# substrings of its message, so a server error is not misread as throttling
+# because its text happened to contain a number.
 RETRYABLE = (
     voyage_error.RateLimitError,
     voyage_error.ServerError,
@@ -1904,9 +2764,9 @@ RETRYABLE = (
 # One client for the process. Constructing one per call re-read the environment
 # and discarded any connection reuse for no benefit.
 _client = None
-# None rather than 0.0 means "no call yet". monotonic()'s zero point is undefined,
-# so a real reading can legitimately be 0.0 and a truthiness test would silently
-# skip the first interval.
+# None rather than 0.0 means "no call yet". monotonic()'s zero point is
+# undefined, so a real reading can legitimately be 0.0 and a truthiness test
+# would silently skip the first interval.
 _last_call_at: float | None = None
 
 
@@ -1932,13 +2792,17 @@ def paced_call(operation: str, *, max_retries: int = 6, **kwargs):
 
     Every Voyage endpoint bills against the same account rate limit, so they all
     queue behind this one gate. That matters for the rerank strategy, which
-    spends two requests per question - one embedding, one rerank. Pacing only the
-    embedding would let the rerank half slip past the limit unmetered.
+    spends two requests per question - one embedding, one rerank. Pacing only
+    the embedding would let the rerank half slip past the limit unmetered and
+    put the run straight back into the 429s pacing exists to avoid.
 
     `operation` names the method on the client: "embed", "rerank".
 
-    Retries back off exponentially (10s, 20s, 40s, then capped at 60s). Pacing
-    still applies between attempts, so the two compose to max(interval, backoff).
+    Retries back off exponentially (10s, 20s, 40s, then capped at 60s) so a call
+    that arrives mid-window waits out the whole per-minute bucket rather than
+    hammering it. Pacing still applies between attempts, so the two compose to
+    max(interval, backoff): the first couple of retries land on the 21s pacing
+    floor and the later ones dominate it.
 
     Raises the last error if every attempt fails, so a genuinely dead API still
     surfaces as a RAG error in the eval rather than being silently swallowed.
@@ -2106,7 +2970,10 @@ from rank_bm25 import BM25Okapi
 from retrievers.vanilla import retrieve as vector_retrieve
 from tracing import langfuse
 
-CHUNKS_FILE = Path("data/chunks.jsonl")
+# Anchored to the repo root rather than the cwd. Evals happen to run from the
+# repo root, but serve.py can be launched from anywhere, and a relative path
+# would make BM25 fail depending only on where the process was started.
+CHUNKS_FILE = Path(__file__).resolve().parent.parent / "data" / "chunks.jsonl"
 
 # Built once at first use and cached for the process.
 _chunks_cache: list[dict] | None = None
@@ -2117,6 +2984,17 @@ _bm25_cache: BM25Okapi | None = None
 # A plain \w+ pattern would yield ["clause", "2", "5", "5", ...], destroying the
 # most precise lexical signal this corpus has.
 _TOKEN = re.compile(r"[a-z0-9]+(?:\.[a-z0-9]+)+|[a-z0-9]+")
+
+# Indexing clause-number parents alongside each token ("2.1.3.5" also emitting
+# "2.1.3" and "2.1") was tried here and reverted. It does what it claims - the
+# query token "2.1" goes from reaching 12 chunks to 61, and the one golden
+# question naming a bare clause improves from rank 14 to 6 - but it lowers BM25
+# clause hit@14 across the scored set from 97.1% to 94.1% and leaves hit@28
+# unchanged. The three questions it pushes out of the window contain no clause
+# number at all: they lose because parent tokens let broad section-level chunks
+# outrank specific sub-clauses. That is the same failure hybrid already has (see
+# EVAL_REPORT Experiment 3), so the expansion makes the real problem worse while
+# fixing a cosmetic one. Only 3 of 39 golden questions name a clause at all.
 
 
 def _tokenize(text: str) -> list[str]:
@@ -2137,9 +3015,33 @@ def _index_text(chunk: dict) -> str:
 def _load_bm25() -> tuple[list[dict], BM25Okapi]:
     global _chunks_cache, _bm25_cache
     if _bm25_cache is None:
+        if not CHUNKS_FILE.exists():
+            # data/ is gitignored, so a fresh clone has the code but not the
+            # corpus. Say which step is missing instead of a bare IO error.
+            raise FileNotFoundError(
+                f"{CHUNKS_FILE} not found. Hybrid retrieval indexes the same chunks "
+                "the vector store was built from - run ingest.py, then chunk.py, "
+                "then embed.py."
+            )
         _chunks_cache = [json.loads(line) for line in CHUNKS_FILE.open(encoding="utf-8")]
         _bm25_cache = BM25Okapi([_tokenize(_index_text(c)) for c in _chunks_cache])
     return _chunks_cache, _bm25_cache
+
+
+def _key(result: dict) -> tuple:
+    """Identity used to fuse the two result lists.
+
+    The retrievers read different stores - vector from Chroma, BM25 from
+    chunks.jsonl - and share no id, because vanilla.retrieve does not return
+    one. Chroma holds the chunk text verbatim, so text plus provenance is a
+    stable join key across both.
+
+    Deliberately the whole text, not a prefix: two chunks in this corpus share
+    their first 100 characters ("INTRODUCTION\\nSpices, Inc. has established,
+    documented, and implemented procedure..."), so a prefix key fuses two
+    distinct chunks into one and silently drops a result.
+    """
+    return (result.get("source"), result.get("page"), result["text"])
 
 
 @observe(name="bm25-search", as_type="retriever")
@@ -2168,38 +3070,78 @@ def bm25_retrieve(query: str, k: int = 10) -> list[dict]:
 
 
 @observe(name="hybrid-search", as_type="retriever")
-def hybrid_retrieve(query: str, k: int = 5, k_per_retriever: int = 10,
+def hybrid_retrieve(query: str, k: int = 5, k_per_retriever: int | None = None,
                     rrf_k: int = 60) -> list[dict]:
-    """Run vector + BM25, fuse via Reciprocal Rank Fusion."""
+    """Run vector + BM25, fuse via Reciprocal Rank Fusion.
+
+    k_per_retriever defaults to max(2k, 20) rather than a fixed 10. ask.py asks
+    for TOP_K=14, and a fixed 10 would hand the fusion fewer vector candidates
+    than the vanilla retriever sees at that same k - hybrid would then be
+    measured against a baseline it was never given the depth to match. Depth is
+    nearly free here: both retrievers run off the one embedding call, and BM25
+    scores the whole corpus regardless of k.
+    """
+    if k_per_retriever is None:
+        k_per_retriever = max(2 * k, 20)
+
     vector_results = vector_retrieve(query, k=k_per_retriever)
     bm25_results = bm25_retrieve(query, k=k_per_retriever)
 
-    rrf_scores: dict[str, float] = {}
-    seen: dict[str, dict] = {}
+    rrf_scores: dict[tuple, float] = {}
+    seen: dict[tuple, dict] = {}
 
     # Derive rank from list position (1-based). The vector retriever returns
     # results nearest-first but with no "rank" key, so don't rely on one.
     for rank, r in enumerate(vector_results, 1):
-        key = r["text"][:100]  # prefix as dedup key
+        key = _key(r)
         rrf_scores[key] = rrf_scores.get(key, 0.0) + 1 / (rank + rrf_k)
         seen[key] = r
 
     for rank, r in enumerate(bm25_results, 1):
-        key = r["text"][:100]
+        key = _key(r)
         rrf_scores[key] = rrf_scores.get(key, 0.0) + 1 / (rank + rrf_k)
+        # Keep the vector copy when both retrievers surfaced the chunk: it
+        # carries the cosine distance, which the BM25 record has no analogue for.
         seen.setdefault(key, r)
 
     ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:k]
+    # "score" is the fused RRF score, replacing whatever per-retriever score the
+    # source record carried. "rank" is the position after fusion.
     results = [
         {**seen[key], "score": score, "rank": rank + 1}
         for rank, (key, score) in enumerate(ranked)
     ]
     langfuse.update_current_span(
         input={"query": query},
+        metadata={
+            "k": k, "k_per_retriever": k_per_retriever, "rrf_k": rrf_k,
+            "n_vector": len(vector_results), "n_bm25": len(bm25_results),
+            "n_fused": len(rrf_scores),
+            "n_overlap": len(vector_results) + len(bm25_results) - len(rrf_scores),
+        },
         output={"top_clauses": [r.get("clause") for r in results]},
     )
     return results
 ```
+
+Two things in there are easy to get wrong and hard to notice.
+
+**The fusion key must identify a chunk, not approximate one.** The obvious key is
+`r["text"][:100]`, and it works right up until two chunks share an opening. This
+corpus has exactly that - a run of SOPs that all begin "INTRODUCTION\nSpices,
+Inc. has established, documented, and implemented procedure..." - so the prefix
+key fused two distinct chunks into one entry and silently dropped a result from
+the output. Nothing errors; you just get `k-1` chunks and never know. The
+retrievers read different stores and share no id (Chroma's vector results carry
+no chunk id back through `vanilla.retrieve`), so the join key is source, page and
+the *whole* text.
+
+**`k_per_retriever` has to scale with `k`.** A fixed 10 while `ask.py` asks for
+`TOP_K=14` means the fusion is choosing 14 results out of 10 vector candidates -
+fewer than the vanilla retriever sees at the same `k`. Any comparison against
+vanilla is then confounded: hybrid loses on depth it was never given. Depth is
+nearly free here, since both retrievers run off the single embedding call and
+BM25 scores the whole corpus regardless, so `max(2k, 20)` is the right default.
 
 ### Test the tokenizer first
 
@@ -2270,9 +3212,15 @@ https://docs.voyageai.com/docs/reranker if it has been renamed.
 
 Reranking is the one strategy whose cost is a whole candidate set rather than a
 single query, so the free tier's token ceiling binds here in a way it does not
-elsewhere. A rerank request pays for every candidate it scores, and a request
-over 10K TPM fails no matter how few candidates it names, so candidates are
-trimmed to a token budget rather than a fixed count.
+elsewhere. Voyage caps an unbilled account at 3 RPM *and 10K TPM*, and a rerank
+request pays for every candidate it scores. Sending 56 candidates raised a
+RateLimitError that no amount of backoff could clear - a request larger than
+the per-minute budget can never succeed, so it retried for 250s and then failed.
+
+Candidates are therefore trimmed to a token budget rather than a fixed count.
+Chunks in this corpus run from ~349 characters at the median to 2400 at p95, a
+7x spread, so any fixed count is either wasteful on small chunks or over the
+ceiling on large ones: 20 large chunks is ~12K tokens, already past the limit.
 """
 import os
 
@@ -2287,15 +3235,31 @@ from tracing import langfuse
 
 RERANK_MODEL = "rerank-2.5"
 
-# Sized for sustained eval throughput, not one question. Measured over the 39
-# golden questions against BM25's top ~56 candidates, 6000 tokens costs one
-# excerpt on 3 of 39 questions and keeps real headroom under 10K TPM; 7000 fits
-# only by ~3% and this clause-dense corpus tokenizes worse than that estimate.
-# This is the knob that buys rerank depth. Raise it once the 10K TPM cap is gone.
+# Sized for sustained eval throughput, not for one question. Pacing applies per
+# Voyage call and rerank spends two per question (embedding + rerank), so the
+# floor is 2 x 21s = 42s, or ~1.43 questions/minute against a 10K TPM ceiling.
+#
+# Measured over the 39 golden questions, taking BM25's top 56 as the candidate
+# set:
+#
+#   budget  kept (median/min)  questions under k=14  sustained TPM
+#   6000        18 / 13               3 / 39             8,275
+#   7000        21 / 15               0 / 39             9,679
+#   8000        24 / 18               0 / 39            11,102   over ceiling
+#
+# 7000 never truncates below k and still fits, but only by 3%, and that margin
+# rests on the estimate below. This corpus is dense with clause numbers like
+# 2.5.5.1, which tokenize far worse than prose, so the real count runs above a
+# 4-chars-per-token guess and 7000 would likely breach in practice. 6000 costs
+# one excerpt on 3 of 39 questions (13 rather than 14) and keeps real headroom.
+#
+# This is the knob that buys rerank depth, not k_pre_rerank on its own. Raise it
+# once the account has a payment method and the 3 RPM / 10K TPM cap is gone.
 RERANK_TOKEN_BUDGET = int(os.getenv("VOYAGE_RERANK_TOKEN_BUDGET", "6000"))
 
-# Rough English ratio. Deliberately an estimate: paying an API call to count
-# tokens exactly would spend the very budget being measured.
+# Rough English ratio. Deliberately an estimate: the point is to stay under a
+# ceiling, and paying an extra API call to count tokens exactly would spend the
+# very budget being measured.
 CHARS_PER_TOKEN = 4
 
 
@@ -2318,8 +3282,12 @@ def _fit_token_budget(candidates: list[dict], budget: int) -> tuple[list[dict], 
 
 @observe(name="rerank-model", as_type="retriever")
 def _rerank_call(query: str, documents: list[str], top_k: int):
-    """The Voyage call on its own span, so the reranker's latency is readable
-    against the retrieval that fed it."""
+    """The Voyage call on its own span.
+
+    Separated from the enclosing "rerank" span so the reranker's latency is
+    readable against the retrieval that fed it - otherwise a slow question looks
+    equally attributable to Chroma, BM25 or Voyage.
+    """
     response = paced_call("rerank", query=query, documents=documents,
                           model=RERANK_MODEL, top_k=top_k)
     langfuse.update_current_span(
@@ -2335,16 +3303,20 @@ def rerank_retrieve(query: str, k: int = 5,
                     k_pre_rerank: int | None = None) -> list[dict]:
     """Get candidates from hybrid, rerank with Voyage, return the top k.
 
-    k_pre_rerank is the ceiling on candidates considered; on the free tier
-    RERANK_TOKEN_BUDGET is what actually decides depth. Defaults to max(4k, 40)
-    so a billed account with the budget raised gets real headroom.
+    k_pre_rerank is the ceiling on how many candidates are *considered*; on the
+    free tier RERANK_TOKEN_BUDGET is what actually decides the depth, since a
+    request over 10K TPM fails no matter how few candidates it names. It
+    defaults to max(4k, 40) so that a billed account with the budget raised gets
+    real headroom - reranking 14 out of 20 has only six candidates to discard,
+    which is rarely enough to change the answer.
     """
     if k_pre_rerank is None:
         k_pre_rerank = max(4 * k, 40)
 
     candidates = hybrid_retrieve(query, k=k_pre_rerank)
     if not candidates:
-        return []   # Voyage rejects an empty document list.
+        # Voyage rejects an empty document list, and there is nothing to rank.
+        return []
 
     n_retrieved = len(candidates)
     candidates, est_tokens = _fit_token_budget(candidates, RERANK_TOKEN_BUDGET)
@@ -2372,6 +3344,9 @@ def rerank_retrieve(query: str, k: int = 5,
             "k": k, "k_pre_rerank": k_pre_rerank, "model": RERANK_MODEL,
             "n_retrieved": n_retrieved, "n_reranked": len(candidates),
             "est_tokens": est_tokens, "token_budget": RERANK_TOKEN_BUDGET,
+            # True when the budget, not k_pre_rerank, set the depth. Worth
+            # filtering on: it also means fewer than k excerpts reached the
+            # model if the budget cut below k.
             "budget_trimmed": len(candidates) < n_retrieved,
             "returned_fewer_than_k": len(results) < k,
         },
@@ -2509,16 +3484,18 @@ data/source/*.pdf,docx
   -> ask.py        retrieve -> assemble cited prompt -> Claude Sonnet 4.6
 
 Retrieval strategies (RETRIEVAL_STRATEGY env var):
-  vanilla  cosine similarity, top_k=5
+  vanilla  cosine similarity, top_k=14
   hybrid   BM25 + cosine fused with RRF (clause-safe tokenizer)
   rerank   hybrid candidates reranked by Voyage rerank-2.5
 
 Evaluation:
-  evals/golden.jsonl   30 scored questions + 5 out-of-corpus refusal probes
-  evals/metrics.py     deterministic clause_hit@k and refusal detection
-  evals/judge.py       Claude Sonnet 4.6, five axes including citation and grounding
-  evals/run_eval.py    runner, CSV output, Langfuse scores
-  evals/analyze.py     summarize / compare / compare_three
+  evals/golden.jsonl     34 scored questions + 5 out-of-corpus refusal probes
+  evals/validate.py      golden-set schema, clause grounding, area coverage
+  evals/metrics.py       deterministic clause_hit@k, refusal, citation grounding
+  evals/check_metrics.py regression cases for metrics.py
+  evals/judge.py         Claude Sonnet 4.6, five axes including citation and grounding
+  evals/run_eval.py      runner, CSV output, Langfuse scores
+  evals/analyze.py       summarize / compare / compare_three
 
 Observability: Langfuse, self-hosted. Every run is a session; every question is
 a trace with judge scores attached.

@@ -5,21 +5,32 @@ I make them. Interview talking points go at the bottom.
 
 ## Observations
 
-(Empty so far. Record what you change and what it did to the eval numbers, the
-same way the drupal-rag-cli notes tracked chunk size, TOP_K, and system prompt
-changes.)
+Measured results live in `evals/EVAL_REPORT.md` - baseline, the chunking
+ablation, the TOP_K sweep, the three-way strategy comparison, and the judge
+noise floor. This section is for the things that never became an experiment.
 
-Things worth recording as you hit them:
-
-- Clause regex `_CLAUSE` tuning: which numbering variants in the real documents
-  did the first pattern miss.
-- Boilerplate `threshold`: the value that actually caught the running footer
-  without eating real content.
-- Which source files tripped the OCR branch, and whether OCR output was usable.
-- Chunking: clause-aware vs a fixed-window baseline, measured on clause_hit@3
-  and citation correctness.
-- TOP_K and the effect on refusal behavior (more context can tempt the model to
-  answer something it should refuse).
+- **Clause regex.** One pattern was not enough. `_CLAUSE_INLINE`
+  (`2.4.3.1 Internal Audits`) matches the SOPs and the audit report; both
+  published standards put a bare `2.5.5` on its own line with the requirement
+  below it, which needed `_CLAUSE_ALONE`. The SOPs state their clause only in
+  the filename, hence the `filename_clause` fallback - 87 of 971 chunks.
+- **Tracked changes in DOCX.** `python-docx`'s `Paragraph.text` reads only `w:r`
+  runs that are direct children of the paragraph, so text inside `w:ins`
+  (unaccepted insertions) is silently dropped. That removed an entire section of
+  2.6.3. `ingest._element_text` walks `w:t` descendants instead. A silent partial
+  extraction is the worst failure mode here - the answer still looks confident.
+- **OCR never fired.** All four PDFs carry a native text layer at 1,400-3,500
+  chars/page, so the `ocrmypdf` branch in `ingest.py` exists but has not run on
+  this corpus.
+- **Boilerplate `threshold`.** 0.6 catches the per-page version footers without
+  eating real content.
+- **Refusal detection is harder than a phrase match.** The model paraphrases the
+  refusal about a fifth of the time, and a phrase-list matcher moved one probe's
+  reported rate 20 points across identical runs. `metrics.is_refusal` now
+  requires a conjunction (scope + negation) in the opening sentence.
+  `evals/check_metrics.py` pins the phrasings.
+- **TOP_K and refusal.** More context did not tempt the model into answering
+  something it should refuse: across the 5/10/14 sweep the probe set stayed 5/5.
 
 ## Interview talking points
 

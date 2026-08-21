@@ -748,8 +748,8 @@ clause structure worth preserving.
 
 | Day | Clean-HTML build | SQF build |
 |---|---|---|
-| 9 source material | scrape HTML to `data/raw/*.txt` | `ingest.py`: extract PDF/DOCX from `data/source/`, OCR fallback, strip boilerplate, write page-aware `data/raw/*.jsonl` |
-| 10 chunk | fixed 2000-char sliding window | clause-aware chunking on SQF clause numbers, with rich metadata |
+| 9 source material | scrape HTML to `data/raw/*.txt` | `ingest.py`: extract PDF/DOCX from `data/source/`, OCR fallback, read tracked-change insertions, strip boilerplate, write page-aware `data/raw/*.jsonl` |
+| 10 chunk | fixed 2000-char sliding window | clause-aware chunking on SQF clause numbers (two header forms, filename fallback, cross-page threading), with rich metadata |
 | 11 embed | Voyage -> Chroma, metadata `{source, chunk_index}` | same, but wider None-safe metadata, collection `sqf_docs` |
 | 12 ask | generic system prompt, `[Excerpt from source]` | compliance system prompt (cite clause, refuse when absent), excerpt header carries clause + page |
 
@@ -880,8 +880,25 @@ without leaking them.
 
 Now the extractor. There is nothing to scrape, so you extract text from the files
 in `data/source/`, clean them, and write page-aware records that Day 10 will
-chunk. Three sub-problems in order: extraction, scanned-page fallback, and
-boilerplate removal.
+chunk. Four sub-problems in order: extraction, scanned-page fallback, tracked
+changes in the Word files, and boilerplate removal.
+
+The `MANIFEST` below is this project's real one, and it is worth reading rather
+than skimming: it is the only place the corpus declares what each document *is*.
+Two things in it are decisions, not bookkeeping. First, the edition. The Spices,
+Inc. certification report identifies this site as certified against **SQF
+Fundamentals Edition 1.1 (FSC 19)** - not SQF Code Edition 9, which is the
+edition most public SQF writing talks about. Getting this wrong poisons
+everything downstream, because the golden set's clause numbers and every answer's
+citation are read against a specific standard. Second, the full SQF Code Edition
+10 is in the corpus as *reference* and carries its own `edition` tag, so a
+retrieved Code 10 clause is never silently presented as a Fundamentals
+requirement.
+
+The rest of the manifest is the actual document set: the certification report,
+the site's Food Safety Management System manual, the two published standards, and
+the `2.x` / `11.x` SOP `.docx` files whose filenames name the clause they
+implement (Day 10 leans on that).
 
 Create `ingest.py` in the project root:
 
@@ -899,16 +916,65 @@ from pathlib import Path
 
 import fitz  # pymupdf
 from docx import Document as DocxDocument
+from docx.oxml.ns import qn
 
 SOURCE_DIR = Path("data/source")
 RAW_DIR = Path("data/raw")
 
 # doc_type and edition are not guessable from the file, so declare them here.
-# Set edition to whatever YOUR documents actually are.
+# edition matches YOUR documents: the Spices, Inc. certification report identifies
+# this corpus as SQF Fundamentals Edition 1.1 (FSC 19), not SQF Code Edition 9.
+_ED = "SQF Fundamentals 1.1"
+_ED_CODE10 = "SQF Code 10"   # the full Food Safety Code, a different (newer) standard
 MANIFEST = {
-    "SQF_Food_Safety_Code.pdf": {"doc_type": "sqf_code", "edition": "9"},
-    "Internal_Audit_SOP.docx":  {"doc_type": "sop",      "edition": "9"},
-    # ... one entry per file in data/source/
+    "Certification Report 1.pdf":                     {"doc_type": "report",  "edition": _ED},
+    "_Food Safety Management System.pdf":             {"doc_type": "manual",  "edition": _ED},
+    # The authoritative published standards themselves (not site SOPs). The site is
+    # certified against Fundamentals 1.1; Code Edition 10 is included as reference and
+    # kept on its own edition tag so answers do not conflate the two standards.
+    "sqf-fundamentals-for-manufacturing-intermediate-09262019-ed-1-1-final.pdf":
+                                                      {"doc_type": "standard", "edition": _ED},
+    "SQFI-Food-Safety-Code-Edition-10_FSC-19.pdf":    {"doc_type": "standard", "edition": _ED_CODE10},
+    "2.1.1 Food Safety Policy.docx":                  {"doc_type": "policy",  "edition": _ED},
+    "Food Safety Reporting Structure Statement.docx": {"doc_type": "policy",  "edition": _ED},
+    "2.1.2 Management Responsibility.docx":                          {"doc_type": "sop", "edition": _ED},
+    "2.1.3 Management Review.docx":                                  {"doc_type": "sop", "edition": _ED},
+    "2.1.4 Complaint Management.docx":                               {"doc_type": "sop", "edition": _ED},
+    "2.2.1 Food Safety Management System.docx":                      {"doc_type": "sop", "edition": _ED},
+    "2.2.2 Document Control.docx":                                   {"doc_type": "sop", "edition": _ED},
+    "2.2.3 Records.docx":                                            {"doc_type": "sop", "edition": _ED},
+    "2.3.2 Raw and Packaging Materials.docx":                        {"doc_type": "sop", "edition": _ED},
+    "2.3.5 Finished Product.docx":                                   {"doc_type": "sop", "edition": _ED},
+    "2.4.1 Food Legislation.docx":                                   {"doc_type": "sop", "edition": _ED},
+    "2.4.2 Good Manufacturing Practices.docx":                       {"doc_type": "sop", "edition": _ED},
+    "2.4.4 Approved Supplier Program.docx":                          {"doc_type": "sop", "edition": _ED},
+    "2.4.5 Non-Conforming Material and Product.docx":               {"doc_type": "sop", "edition": _ED},
+    "2.4.6 Product Rework.docx":                                     {"doc_type": "sop", "edition": _ED},
+    "2.4.7 Product Release.docx":                                    {"doc_type": "sop", "edition": _ED},
+    "2.4.8 Environmental Monitoring.docx":                           {"doc_type": "sop", "edition": _ED},
+    "2.5.1, 2.5.2 Validation, Effectiveness and Verification.docx":  {"doc_type": "sop", "edition": _ED},
+    "2.5.3 Corrective and Preventative Action.docx":                 {"doc_type": "sop", "edition": _ED},
+    "2.5.4 Product Sampling, Inspection and Analysis.docx":          {"doc_type": "sop", "edition": _ED},
+    "2.5.5 Internal Audits and Inspections.docx":                    {"doc_type": "sop", "edition": _ED},
+    "2.6.1, 2.6.2 Product Identification and Trace.docx":            {"doc_type": "sop", "edition": _ED},
+    "2.6.3 Withdrawal and Recall.docx":                              {"doc_type": "sop", "edition": _ED},
+    "2.7.1 Food Defense Plan.docx":                                  {"doc_type": "sop", "edition": _ED},
+    "2.8.1 Allergen Management For Food Fundamentals.docx":          {"doc_type": "sop", "edition": _ED},
+    "2.9 Training.docx":                                             {"doc_type": "sop", "edition": _ED},
+    "11.1.7 Equipment Utensils.docx":                               {"doc_type": "sop", "edition": _ED},
+    "11.2.1 Repairs and Maintenance.docx":                           {"doc_type": "sop", "edition": _ED},
+    "11.2.3 Calibration.docx":                                       {"doc_type": "sop", "edition": _ED},
+    "11.2.5 Cleaning and Sanitation.docx":                           {"doc_type": "sop", "edition": _ED},
+    "11.3.1 Personnel Hygiene and Welfare.docx":                     {"doc_type": "sop", "edition": _ED},
+    "11.3.1 Risk Assessment – Personal Items, Jewelry, Electronics and Drink Containers.docx": {"doc_type": "sop", "edition": _ED},
+    "11.4.1 Sensory Evaluation Procedure.docx":                      {"doc_type": "sop", "edition": _ED},
+    "11.5.1 Water Ice and Air Supply.docx":                          {"doc_type": "sop", "edition": _ED},
+    "11.6.1 Receipt, Storage and Handling of Goods.docx":            {"doc_type": "sop", "edition": _ED},
+    "11.6.5 Loading Transport and Unloading Practices.docx":         {"doc_type": "sop", "edition": _ED},
+    "11.7.3 Foreign Material Control & Detection.docx":              {"doc_type": "sop", "edition": _ED},
+    "11.8.1.1 Waste Disposal.docx":                                  {"doc_type": "sop", "edition": _ED},
+    "11.8.1.6 Controlled Disposal of Trademarked Materials.docx":    {"doc_type": "sop", "edition": _ED},
+    "Process Narratives copy.docx":                                  {"doc_type": "sop", "edition": _ED},
 }
 
 
@@ -938,12 +1004,37 @@ def ensure_text_layer(path: Path) -> Path:
     return out
 
 
+def _element_text(element) -> str:
+    """Text of a w:p/w:tc in document order, INCLUDING tracked insertions.
+
+    python-docx's Paragraph.text only reads <w:r> runs that are direct children
+    of the paragraph, so runs nested in <w:ins> (unaccepted tracked-change
+    insertions) are silently dropped - that is how the entire "Recall vs.
+    Withdrawal Determination" section of 2.6.3 went missing. We walk every <w:t>
+    descendant instead: this picks up <w:ins> text and naturally excludes
+    deletions, since deleted text lives in <w:delText>, not <w:t>.
+    """
+    parts = []
+    for node in element.iter():
+        if node.tag == qn("w:t"):
+            parts.append(node.text or "")
+        elif node.tag == qn("w:tab"):
+            parts.append("\t")
+        elif node.tag in (qn("w:br"), qn("w:cr")):
+            parts.append("\n")
+    return "".join(parts)
+
+
 def load_docx(path: Path) -> list[dict]:
     doc = DocxDocument(path)
-    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    parts = []
+    for p in doc.paragraphs:
+        text = _element_text(p._p).strip()
+        if text:
+            parts.append(text)
     for table in doc.tables:
         for row in table.rows:
-            cells = [c.text.strip() for c in row.cells if c.text.strip()]
+            cells = [t for c in row.cells if (t := _element_text(c._tc).strip())]
             if cells:
                 parts.append(" | ".join(cells))   # keep tables as pipe-joined rows
     return [{"page": None, "text": "\n".join(parts)}]
@@ -998,16 +1089,28 @@ Run it and spot-check:
 
 ```bash
 uv run python ingest.py
-# SQF_Food_Safety_Code.pdf -> SQF_Food_Safety_Code.jsonl (128 pages)
-# Internal_Audit_SOP.docx  -> Internal_Audit_SOP.jsonl (1 pages)
+# Certification Report 1.pdf -> Certification Report 1.jsonl (43 pages)
+# sqf-fundamentals-...-ed-1-1-final.pdf -> ...jsonl (56 pages)
+# SQFI-Food-Safety-Code-Edition-10_FSC-19.pdf -> ...jsonl (74 pages)
+# 2.5.5 Internal Audits and Inspections.docx -> ...jsonl (1 pages)
+# ... 44 files in all
 
-head -1 data/raw/SQF_Food_Safety_Code.jsonl | python -m json.tool
+head -1 "data/raw/Certification Report 1.jsonl" | python -m json.tool
 ```
 
 You want real clause text, not a wall of repeated header lines. If a known
 scanned form produced empty pages, confirm the OCR branch fired (you would have
 seen the "looks scanned" line). If boilerplate persists, adjust `threshold`;
 version footers that appear on every page get caught at 0.6.
+
+Spot-check a `.docx` that you know has unaccepted tracked changes, and grep the
+raw output for a phrase that only appears inside an insertion. This is the check
+that caught the `_element_text` bug: `2.6.3 Withdrawal and Recall.docx` renders
+fine in Word, but its "Recall vs. Withdrawal Determination" section lives
+entirely inside `<w:ins>` runs, so `paragraph.text` returned a document missing a
+section - with no error and no empty page to notice. A silent partial extraction
+is the worst failure mode in this whole pipeline: the answer still looks
+confident, it is just answering from a document that lost a requirement.
 
 ```bash
 git add ingest.py .gitignore pyproject.toml
@@ -1027,42 +1130,192 @@ into an audit-grade citation.
 Create `chunk.py`:
 
 ```python
-"""Day 10 (SQF): Clause-aware chunking.
+"""Clause-aware chunking.
 
 Reads the page-aware records from ingest.py (data/raw/*.jsonl) and emits one
 chunk per clause to data/chunks.jsonl, carrying clause metadata. Same output
 contract as a plain chunker (a jsonl of {id, source, text, ...}), just richer
 and split on clauses instead of a fixed window.
+
+The clause number is load-bearing: it is what the model cites and what the eval
+scores retrieval against, so a chunk that loses it is unciteable and can never
+count as a hit. Three things have to go right for it to survive, and each was
+dropping a different slice of the corpus:
+
+  - the published standards put the clause number on a line of its own with the
+    requirement text below it, so a pattern that expects "2.5.5 Internal Audits"
+    on one line matches nothing in them;
+  - a requirement that spans a page break continues on a page whose first line
+    is not a header, so splitting page-by-page orphans the continuation;
+  - the site SOPs carry no clause number in their body at all - it is in the
+    filename ("2.8.1 Allergen Management For Food Fundamentals.docx").
 """
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 RAW_DIR = Path("data/raw")
 OUT_FILE = Path("data/chunks.jsonl")
 
-MAX_CHARS = 2400   # sub-split a clause only if it exceeds this (~600 tokens)
+MAX_CHARS = 2400        # sub-split a clause only if it exceeds this (~600 tokens)
+HEADING_SEGMENTS = 3    # 2.1.2 is a heading with a title; 2.1.2.4 is a requirement under it
+MAX_TITLE_CHARS = 80
 
-# "2.4.3.1 Internal Audits" - requires at least one dot so plain list numbers
-# ("1.") do not false-trigger. Tune to your documents' numbering scheme.
-_CLAUSE = re.compile(r"^\s*(\d+(?:\.\d+){1,4})\s+(\S.*)$")
+# Two header forms. Inline ("2.4.3.1 Internal Audits") is what the SOPs and the
+# audit report use; standalone is what both published standards use. Both
+# require at least one dot so a plain list number ("1.") does not false-trigger.
+_CLAUSE_INLINE = re.compile(r"^\s*(\d+(?:\.\d+){1,4})\s+(\S.*)$")
+_CLAUSE_ALONE = re.compile(r"^\s*(\d+(?:\.\d+){1,4})\s*$")
+
+# Table-of-contents rows ("Food Safety Policy ......... 24"). Left in, every ToC
+# entry becomes a contentless clause chunk competing with the real requirement.
+_TOC_LEADER = re.compile(r"\.{4,}")
+
+# "i.", "ii.", "a)", "3." - list markers pymupdf emits on their own line.
+_LIST_MARKER = re.compile(r"^\s*(?:[ivxlc]+|[a-z]|\d{1,2})[.)]\s*$", re.IGNORECASE)
+
+# Leading clause number(s) in a filename stem, e.g. "2.5.1, 2.5.2 Validation...".
+_FILENAME_CLAUSE = re.compile(r"^(\d+(?:\.\d+){1,4})")
+_FILENAME_PREFIX = re.compile(r"^(?:\d+(?:\.\d+){1,4}[,\s]*)+")
 
 
-def split_into_clauses(text: str):
-    """Yield [clause, title, body] lists, splitting on clause headers."""
-    current = None
-    for line in text.splitlines():
-        m = _CLAUSE.match(line)
-        if m:
-            if current:
-                yield current
-            current = [m.group(1), m.group(2).strip(), line]
-        elif current is not None:
-            current[2] += "\n" + line
+def _looks_like_title(line: str) -> bool:
+    """True if this line reads as a clause title rather than requirement prose.
+
+    A title is short and self-contained; requirement text runs long and breaks
+    mid-sentence, so it ends on a comma, colon or wrapped word.
+
+    A clause number is explicitly not a title. Stripping ToC leader lines leaves
+    each ToC entry's number sitting directly above the next one, and without this
+    guard "2.1.2" adopts "2.1.3" as its title and every requirement beneath it
+    inherits that instead of "Management Responsibility".
+    """
+    s = line.strip()
+    if not s or len(s) > MAX_TITLE_CHARS:
+        return False
+    if _CLAUSE_ALONE.match(s) or _CLAUSE_INLINE.match(s):
+        return False
+    return s[-1] not in ".,;:" and not _LIST_MARKER.match(s)
+
+
+def _inherited_title(titles: dict[str, str], clause: str) -> str | None:
+    """Title of the nearest ancestor heading - 2.1.2.4 inherits from 2.1.2.
+
+    Requirement clauses in the standards have no title of their own, so without
+    this they carry clause_title=None and the citation header shows a bare number.
+    """
+    parts = clause.split(".")
+    for cut in range(len(parts) - 1, 0, -1):
+        parent = ".".join(parts[:cut])
+        if parent in titles:
+            return titles[parent]
+    return None
+
+
+def filename_clause(source: str) -> tuple[str | None, str | None]:
+    """(clause, title) named by a source filename, or (None, None).
+
+    Used only as a fallback for documents whose body text carries no clause
+    header - the SOPs are written PURPOSE / SCOPE / PROCEDURE with the clause
+    they implement only in the filename.
+    """
+    stem = Path(source).stem
+    m = _FILENAME_CLAUSE.match(stem)
+    if not m:
+        return None, None
+    return m.group(1), _FILENAME_PREFIX.sub("", stem).strip() or None
+
+
+def document_lines(recs: list[dict]):
+    """Yield (page, line) for every line of a document, in reading order.
+
+    Iterating the whole document rather than each page in isolation is what
+    carries clause context across a page break.
+    """
+    for rec in recs:
+        for line in rec["text"].splitlines():
+            if not _TOC_LEADER.search(line):
+                yield rec["page"], line
+
+
+def split_into_clauses(lines):
+    """Split a document's (page, line) stream into per-clause chunks.
+
+    Yields dicts of {clause, clause_title, page, text, from_header}. from_header
+    distinguishes a real clause header from preamble text, so contentless
+    headings can be dropped without dropping unnumbered prose.
+    """
+    lines = list(lines)
+    titles: dict[str, str] = {}
+    chunks: list[dict] = []
+    current: dict | None = None
+
+    def start(clause, title, page, header_line, from_header):
+        nonlocal current
+        if current is not None:
+            chunks.append(current)
+        if clause and title:
+            titles.setdefault(clause, title)
+        current = {
+            "clause": clause,
+            "clause_title": title,
+            "page": page,
+            "body": [header_line] if header_line else [],
+            "from_header": from_header,
+        }
+
+    i = 0
+    while i < len(lines):
+        page, line = lines[i]
+        alone = _CLAUSE_ALONE.match(line)
+        inline = _CLAUSE_INLINE.match(line)
+
+        if alone:
+            clause = alone.group(1)
+            title, consumed = None, 1
+            # Only heading-level numbers take the next line as a title; for a
+            # requirement number that next line is the requirement itself.
+            if (clause.count(".") + 1 <= HEADING_SEGMENTS
+                    and i + 1 < len(lines) and _looks_like_title(lines[i + 1][1])):
+                title, consumed = lines[i + 1][1].strip(), 2
+            resolved = title or _inherited_title(titles, clause)
+            header = f"{clause} {resolved}" if resolved else clause
+            start(clause, resolved, page, header, True)
+            i += consumed
+            continue
+
+        if inline:
+            clause, title = inline.group(1), inline.group(2).strip()
+            if not _looks_like_title(title):
+                title = _inherited_title(titles, clause)
+            start(clause, title, page, line.strip(), True)
+            i += 1
+            continue
+
+        # Text with no clause header above it. Threading context across pages is
+        # what preserves a clause number through a page break, but unnumbered
+        # prose has no context worth preserving - and letting it run on would
+        # merge a document's whole front matter into one chunk stamped with the
+        # first page. Break those at the page boundary so the cited page is right.
+        if current is None or (current["clause"] is None and page != current["page"]):
+            start(None, None, page, line, False)
         else:
-            current = [None, None, line]   # preamble before first clause
-    if current:
-        yield current
+            current["body"].append(line)
+        i += 1
+
+    if current is not None:
+        chunks.append(current)
+
+    for ch in chunks:
+        body = [ln for ln in ch["body"] if ln.strip()]
+        # A clause header with nothing under it is a heading or a ToC remnant -
+        # no requirement text, so nothing worth retrieving.
+        if ch["from_header"] and len(body) <= 1:
+            continue
+        text = "\n".join(body).strip()
+        if text:
+            yield {**ch, "text": text}
 
 
 def sub_split(body: str, size: int):
@@ -1079,28 +1332,58 @@ def sub_split(body: str, size: int):
 def main():
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     written = 0
+    stats: Counter[str] = Counter()
+    # Same clause number can appear more than once in a document (e.g. audit
+    # reports cite a clause repeatedly), so disambiguate repeated base ids.
+    seen_ids: dict[str, int] = {}
     with OUT_FILE.open("w", encoding="utf-8") as out:
         for jf in sorted(RAW_DIR.glob("*.jsonl")):
-            for line in jf.open(encoding="utf-8"):
-                rec = json.loads(line)
-                for clause, title, body in split_into_clauses(rec["text"]):
-                    for i, piece in enumerate(sub_split(body.strip(), MAX_CHARS)):
-                        if not piece:
-                            continue
-                        module = clause.split(".")[0] if clause else None
-                        out.write(json.dumps({
-                            "id": f"{Path(rec['source']).stem}__{clause or 'preamble'}__{rec['page']}__{i}",
-                            "text": piece,
-                            "source": rec["source"],
-                            "doc_type": rec.get("doc_type"),
-                            "edition": rec.get("edition"),
-                            "module": module,
-                            "clause": clause,
-                            "clause_title": title,
-                            "page": rec["page"],
-                        }) + "\n")
-                        written += 1
+            recs = [json.loads(line) for line in jf.open(encoding="utf-8")]
+            if not recs:
+                continue
+            source = recs[0]["source"]
+            fb_clause, fb_title = filename_clause(source)
+
+            for ch in split_into_clauses(document_lines(recs)):
+                clause, title = ch["clause"], ch["clause_title"]
+                clause_source = "header" if clause else None
+                if clause is None and fb_clause:
+                    clause, clause_source = fb_clause, "filename"
+                    title = title or fb_title
+
+                for i, piece in enumerate(sub_split(ch["text"], MAX_CHARS)):
+                    if not piece.strip():
+                        continue
+                    # Counted per written chunk, not per clause, so the reported
+                    # coverage matches what actually lands in the corpus.
+                    stats[clause_source or "none"] += 1
+                    module = clause.split(".")[0] if clause else None
+                    base_id = f"{Path(source).stem}__{clause or 'preamble'}__{ch['page']}__{i}"
+                    n = seen_ids.get(base_id, 0)
+                    seen_ids[base_id] = n + 1
+                    chunk_id = base_id if n == 0 else f"{base_id}__{n}"
+                    out.write(json.dumps({
+                        "id": chunk_id,
+                        "text": piece,
+                        "source": source,
+                        "doc_type": recs[0].get("doc_type"),
+                        "edition": recs[0].get("edition"),
+                        "module": module,
+                        "clause": clause,
+                        # How the clause was determined: a header in the text, or
+                        # the filename. Keeps the weaker signal auditable.
+                        "clause_source": clause_source,
+                        "clause_title": title,
+                        "page": ch["page"],
+                    }) + "\n")
+                    written += 1
+
+    total = sum(stats.values())
+    unclaused = stats["none"]
     print(f"Wrote {written} clause chunks to {OUT_FILE}")
+    print(f"  clause from header:   {stats['header']}")
+    print(f"  clause from filename: {stats['filename']}")
+    print(f"  no clause:            {unclaused} ({100 * unclaused / max(total, 1):.0f}%)")
 
 
 if __name__ == "__main__":
@@ -1109,18 +1392,58 @@ if __name__ == "__main__":
 
 ```bash
 uv run python chunk.py
-# Wrote 214 clause chunks to data/chunks.jsonl
+# Wrote 971 clause chunks to data/chunks.jsonl
+#   clause from header:   816
+#   clause from filename: 87
+#   no clause:            68 (7%)
 head -1 data/chunks.jsonl | python -m json.tool
 ```
 
-Two deliberate rules: do not merge across clause boundaries to hit a size floor
-(blurring two requirements into one chunk is the exact failure you are avoiding),
-and only sub-split a clause when it is genuinely long, copying the clause metadata
-onto every sub-piece so citation survives.
+That closing coverage report is the point of the whole exercise, and it is worth
+printing every run. A chunk with no clause is not junk - front matter and process
+narratives legitimately have none - but it can never be a retrieval *hit*,
+because the eval scores retrieval by clause. If that last number climbs after you
+change a regex, you just made part of the corpus unciteable, and nothing else in
+the pipeline will tell you.
 
-If the clause regex misses your documents' numbering (some SQF exports indent
-clause numbers or put them on their own line), tune `_CLAUSE` against a real page
-before moving on. This is the one heuristic worth getting right by inspection.
+Two deliberate rules survive from the simple version: do not merge across clause
+boundaries to hit a size floor (blurring two requirements into one chunk is the
+exact failure you are avoiding), and only sub-split a clause when it is genuinely
+long, copying the clause metadata onto every sub-piece so citation survives.
+
+Everything else here exists because a specific slice of this corpus was being
+dropped:
+
+- **Two header forms.** `_CLAUSE_INLINE` matches `2.4.3.1 Internal Audits` (the
+  SOPs and the audit report). Both *published standards* instead put a bare
+  `2.5.5` on its own line with the requirement below it, which the inline
+  pattern matches zero times - so `_CLAUSE_ALONE` handles that, taking the next
+  line as a title only when the number is heading-level (`HEADING_SEGMENTS`).
+  For a deeper requirement number the next line is the requirement itself, not a
+  title.
+- **Filename fallback.** The site SOPs are written PURPOSE / SCOPE / PROCEDURE
+  and never state their clause in the body; it is in the filename.
+  `filename_clause()` recovers it, and `clause_source` (`header` | `filename` |
+  `null`) records which signal was used so the weaker one stays auditable. That
+  fallback is 87 of the 971 chunks - roughly a tenth of the corpus that a
+  body-text-only chunker leaves unciteable.
+- **Cross-page threading.** `document_lines()` iterates the whole document, not
+  page by page. A requirement that spans a page break continues on a page whose
+  first line is not a header, so page-at-a-time chunking orphans the
+  continuation from its clause number.
+- **ToC stripping and title inheritance.** `_TOC_LEADER` drops
+  `Food Safety Policy ......... 24` rows, which would otherwise each become a
+  contentless clause chunk competing with the real requirement.
+  `_looks_like_title` and `_inherited_title` then let `2.1.2.4` inherit
+  "Management Responsibility" from `2.1.2`, so a sub-clause with no title of its
+  own still renders a meaningful citation header instead of a bare number.
+- **Repeated ids.** An audit report cites the same clause on several pages, so
+  `seen_ids` disambiguates a repeated base id rather than letting the second
+  chunk overwrite the first at embed time.
+
+If the clause regexes miss your documents' numbering, tune them against a real
+page before moving on, and watch the coverage line rather than the total. This is
+the one heuristic worth getting right by inspection.
 
 ```bash
 git add chunk.py
@@ -1209,12 +1532,15 @@ if __name__ == "__main__":
 
 ```bash
 uv run python embed.py
-# Embedding 214 chunks...
-# Stored 214 vectors in collection 'sqf_docs'.
+# Embedding 971 chunks...
+# Stored 971 vectors in collection 'sqf_docs'.
 ```
 
-A couple hundred chunks takes a few minutes with the 21-second free-tier sleeps.
-That is expected.
+At `BATCH = 8` and a 21-second sleep between batches, 971 chunks is ~122 batches
+and about **45 minutes**. That is expected, and it is why this script rebuilds
+the collection from scratch rather than trying to be incremental - but also why
+you should not casually re-run it. Get `chunk.py` right first; embedding is the
+slow, expensive end of the pipeline.
 
 ```bash
 git add embed.py
@@ -1356,7 +1682,8 @@ Test the two behaviors that matter:
 
 ```bash
 uv run python ask.py "How often must internal audits be conducted?"
-# Expect an answer citing a real clause, e.g. (SQF_Food_Safety_Code.pdf, 2.4.3, p.34)
+# Expect an answer citing a real clause, e.g.
+# (sqf-fundamentals-for-manufacturing-intermediate-09262019-ed-1-1-final.pdf, 2.5.5.1, p.28)
 
 uv run python ask.py "What is the maximum fine for an OSHA violation?"
 # Expect "Not found in the provided documents" - this is out of corpus
@@ -1406,8 +1733,10 @@ you call Week 2 done.
 
 ### Week 2 Wrap-up Checklist
 
-- [ ] `ingest.py` extracts PDF and DOCX, OCRs scanned files, strips boilerplate
-- [ ] `chunk.py` splits on clauses and carries clause/page metadata
+- [ ] `ingest.py` extracts PDF and DOCX, OCRs scanned files, reads tracked-change
+      insertions, strips boilerplate
+- [ ] `chunk.py` splits on clauses and carries clause/page metadata, and its
+      no-clause coverage number is one you have looked at and accepted
 - [ ] `embed.py` stores None-safe metadata in the `sqf_docs` collection
 - [ ] `ask.py` cites clauses and refuses out-of-corpus questions
 - [ ] Repo pushed; `data/source/` and `.chroma/` gitignored

@@ -217,42 +217,66 @@ Build a LangChain version of your SQF RAG that reuses your clause chunks, so the
 corpus, the chunking and the clause metadata are identical to the raw-API build
 and the only variable is the framework.
 
-The same Voyage pacing that carries the raw-API build applies here.
+The same Voyage pacing that carries the raw-API build applies here, and this is
+the part of the day that will actually cost you time if you get it wrong.
 `langchain_voyageai` batches by token budget and fires the batches back to back,
 so a plain `Chroma.from_documents()` over the whole corpus trips the free tier on
-the first request. Pace it yourself with the same 8-chunk / 21-second numbers
-`embed.py` uses, and make the build resumable so a run cut short by a rate limit
-picks up where it stopped.
+the first request.
+
+The obvious fix - `VoyageAIEmbeddings(model=..., batch_size=8)` plus a
+`time.sleep(21)` between batches - paces the **build** and leaves the **query**
+side ungated, which is a bug you will not see until the demo. `retriever.invoke()`
+embeds the query through that same `VoyageAIEmbeddings` object, and
+`langchain_voyageai` constructs its own `voyageai.Client` with `max_retries=0`,
+so the first 429 propagates straight out of the retriever. You cannot configure
+around it either: its pydantic model sets `extra="forbid"` and has no retry
+field, so there is nowhere to hand it a client you built.
+
+So implement `Embeddings` directly and route both halves through the `paced_call`
+gate you already wrote in `retrievers/embed.py` (Week 4 Day 9). That gate is
+process-wide, which is the point - a query issued right after a build otherwise
+lands inside the same 3 RPM window as the final ingest batch and is rejected on
+arrival. Note also what disappears: there is no `time.sleep` in the build loop
+any more, because `paced_call` waits for its slot *before* every request,
+including the one after the last batch. That final interval is exactly the gap a
+manual sleep-between-batches leaves open.
+
+While you are here, stop redefining the prompt, the model and `k`. Import
+`SYSTEM_PROMPT`, `LLM_MODEL` and `TOP_K` from `ask.py`. The entire point of this
+file is to find out whether LCEL is worth adopting, and that comparison only
+means something if the two pipelines differ in their plumbing and nothing else -
+a prompt that drifts by a blank line, or a `k` that differs from the swept value,
+shows up as a quality difference that has nothing to do with LangChain.
 
 ```python
 """Day 2: LangChain RAG over the SQF corpus. Ingestion + retrieval.
 
 Loads the clause chunks produced by chunk.py (data/chunks.jsonl) rather than
 re-splitting, so clause/page metadata survives for citation. LangChain owns
-embedding, storage and retrieval only.
+embedding, storage and retrieval.
 """
 import json
-import time
 from pathlib import Path
 
-from langchain_core.documents import Document
-from langchain_voyageai import VoyageAIEmbeddings
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 from rich.progress import track
 
 # Same contract as embed.py: VOYAGE_API_KEY comes from .env, not from whatever
 # the current shell happens to have exported.
 import env  # noqa: F401
+from retrievers.embed import EMBED_MODEL, embed_query, paced_call
 
 CHUNKS_FILE = Path("data/chunks.jsonl")
 PERSIST_DIR = ".chroma_langchain"   # separate dir so we don't clobber the raw-API index
 COLLECTION = "sqf_docs_lc"
-EMBED_MODEL = "voyage-3-lite"
 
-# Voyage free tier is 3 RPM / 10K TPM. Pace batches ourselves with the numbers
-# embed.py already uses, since langchain_voyageai fires batches back to back.
+# Voyage's free tier is 3 RPM / 10K TPM. langchain_voyageai batches by token
+# budget and fires the batches back to back, so a plain Chroma.from_documents()
+# over 971 chunks trips the limit on the first request. Keep embed.py's batch
+# size for the token budget; the request spacing comes from paced_call.
 BATCH = 8
-SLEEP_BETWEEN_BATCHES = 21
 
 # Chroma metadata values must be str/int/float/bool - never None (same constraint
 # as embed.py). Drop None keys so preamble/DOCX chunks don't break the load.
@@ -264,15 +288,45 @@ def _to_document(rec: dict) -> Document:
     return Document(page_content=rec["text"], metadata=metadata)
 
 
+class PacedVoyageEmbeddings(Embeddings):
+    """Voyage embeddings behind the pace-and-retry gate in retrievers/embed.py.
+
+    langchain_voyageai's VoyageAIEmbeddings builds its own voyageai.Client, and
+    that SDK defaults to max_retries=0 - so the first 429 propagates straight
+    out of retriever.invoke(). Its pydantic model sets extra="forbid" and has no
+    retry field, so there is nowhere to pass a configured client in. Hence a
+    plain Embeddings implementation instead of a subclass.
+
+    Going through paced_call also puts both halves of this script on the same
+    process-wide 21s spacing as the raw-API path, which matters here: without
+    it, a query issued right after a build lands inside the same 3 RPM window as
+    the final ingest batch and is rejected on arrival.
+    """
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        response = paced_call("embed", texts=texts, model=EMBED_MODEL,
+                              input_type="document")
+        return response.embeddings
+
+    def embed_query(self, text: str) -> list[float]:
+        # The shared helper, so a LangChain query produces the same Langfuse
+        # embedding span as a vanilla one.
+        return embed_query(text)
+
+
 def _store() -> Chroma:
-    embeddings = VoyageAIEmbeddings(model=EMBED_MODEL, batch_size=BATCH)
-    return Chroma(collection_name=COLLECTION, embedding_function=embeddings,
-                  persist_directory=PERSIST_DIR)
+    embeddings = PacedVoyageEmbeddings()
+    return Chroma(
+        collection_name=COLLECTION,
+        embedding_function=embeddings,
+        persist_directory=PERSIST_DIR,
+    )
 
 
 def build_index():
     records = [json.loads(line) for line in CHUNKS_FILE.open(encoding="utf-8")]
     print(f"Loaded {len(records)} clause chunks")
+
     vectorstore = _store()
 
     # Chunk ids are stable and langchain_chroma upserts, so a build cut short by
@@ -283,14 +337,16 @@ def build_index():
     if indexed:
         print(f"{len(indexed)} already indexed, embedding the remaining {len(pending)}")
 
+    # No sleep in the loop: PacedVoyageEmbeddings already waits for its slot
+    # before every request, including the one after the last batch. That last
+    # interval is the one a manual "sleep between batches" leaves out, and it is
+    # exactly the gap a query issued right after the build falls into.
     batches = [pending[i:i + BATCH] for i in range(0, len(pending), BATCH)]
-    for idx, batch in enumerate(track(batches, description="Embedding")):
+    for batch in track(batches, description="Embedding"):
         vectorstore.add_documents(
             documents=[_to_document(r) for r in batch],
             ids=[r["id"] for r in batch],
         )
-        if idx < len(batches) - 1:
-            time.sleep(SLEEP_BETWEEN_BATCHES)
 
     print(f"Indexed {vectorstore._collection.count()} chunks in {PERSIST_DIR}")
     return vectorstore
@@ -366,39 +422,53 @@ behave like `ask.py`, not just answer the same questions. That means two things:
   because your Week 3 eval harness scores citation and grounding against the
   context the model saw and computes clause-hit from it.
 
-### Project: Full `langchain_rag.py` with generation
+The strongest way to guarantee both is not to reimplement them. **Import
+`SYSTEM_PROMPT`, `LLM_MODEL`, `TOP_K` and `assemble_prompt` from `ask.py`.** A
+`format_docs` written here would drift from `assemble_prompt` the first time
+either changes, and then your framework comparison is measuring a prompt
+difference you did not intend. This is the single-source-of-truth rule in
+`CLAUDE.md`, and Week 5 is exactly the week it earns its keep.
 
-Add the generation chain. Note `format_docs` mirrors `assemble_prompt` from
-`ask.py`, and the answer function returns `(answer, chunks)` where each chunk is a
-plain dict shaped like the raw-API retrievers return.
+Import `_score_answer` too, private underscore and all. The two reference-free
+scores are what make a LangChain answer comparable to a vanilla one in the
+Langfuse UI, and a second copy of that logic here would be the same drift risk as
+a second copy of the prompt.
+
+### Project: Full `langchain_rag.py` with generation
 
 ```python
 # Add to langchain_rag.py
 
+from functools import lru_cache
+
 from langchain.chat_models import init_chat_model
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough
+from langfuse import observe
+from langfuse.langchain import CallbackHandler
 
-SYSTEM = """You answer questions about the SQF certification documents in the
-provided excerpts, for a food-safety practitioner.
+# _score_answer is private to ask.py, and imported anyway: the two reference-free
+# scores are what make a LangChain answer comparable to a vanilla one in the
+# Langfuse UI, and a second copy of that logic here would be the same drift risk
+# as a second copy of the prompt.
+from ask import LLM_MODEL, SYSTEM_PROMPT, TOP_K, _score_answer, assemble_prompt
+from tracing import langfuse
 
-Rules:
-- Answer only from the excerpts. If they do not contain the requirement, say
-  "Not found in the provided documents" and stop. Never supply a requirement from
-  general knowledge or another standard.
-- Cite the clause for every requirement you state, as (source, clause, p.page).
-  If an excerpt has no clause number, cite the source and page.
-- If an answer spans multiple clauses, list each with its own citation.
-- Use plain hyphens, never em dashes."""
-
+# SYSTEM_PROMPT arrives as a SystemMessage rather than a ("system", ...) tuple.
+# A tuple is parsed as an f-string-style template, so the day someone puts a
+# brace in ask.py's prompt this would fail with a missing-variable error in a
+# file that has nothing to do with the edit. A SystemMessage is passed through
+# verbatim. The human turn is templated, but only the template string is parsed
+# - clause text substituted into {user_message} is data, braces and all.
 PROMPT = ChatPromptTemplate.from_messages([
-    ("system", SYSTEM),
-    ("human", "Documentation excerpts:\n{context}\n\nQuestion: {question}\n\nAnswer using only the excerpts above, citing clauses."),
+    SystemMessage(content=SYSTEM_PROMPT),
+    ("human", "{user_message}"),
 ])
 
 
-def _doc_to_chunk(doc) -> dict:
+def _doc_to_chunk(doc: Document) -> dict:
     """Convert a LangChain Document to the chunk dict shape the eval expects."""
     m = doc.metadata
     return {
@@ -411,46 +481,72 @@ def _doc_to_chunk(doc) -> dict:
     }
 
 
-def format_docs(docs) -> str:
-    """Same excerpt header format as ask.py, so the model has clauses to cite."""
-    blocks = []
-    for i, d in enumerate(docs, 1):
-        m = d.metadata
-        header = f"[Excerpt {i} | {m.get('source', '?')}"
-        if m.get("clause"):
-            header += f" | clause {m['clause']}"
-        if m.get("page") is not None:
-            header += f" | p.{m['page']}"
-        header += "]"
-        blocks.append(f"{header}\n{d.page_content}")
-    return "\n\n---\n\n".join(blocks)
+def _docs_to_chunks(docs: list[Document]) -> list[dict]:
+    return [_doc_to_chunk(d) for d in docs]
 
 
-def build_rag_chain(k: int = 5):
-    retriever = get_retriever(k=k)
-    model = init_chat_model("claude-sonnet-4-6", temperature=0)
+@lru_cache(maxsize=None)
+def build_rag_chain(k: int = TOP_K):
+    """Retrieval + generation as one LCEL chain, returning the answer AND its context.
+
+    Cached per k because every call to _store() builds a fresh Chroma client and
+    a fresh embeddings object, and init_chat_model resolves and constructs a
+    provider client. None of that is per-question work.
+
+    The chain carries `chunks` alongside the answer rather than retrieving twice.
+    That is not just tidiness: under the pacing gate a second retrieval costs a
+    real 21 seconds, so a retrieve-then-answer helper that ignored the chain's
+    own retrieval would double the wall-clock of a 39-record eval.
+
+    The user turn is built by ask.assemble_prompt, so the model sees exactly the
+    same bytes it sees on the vanilla path - the excerpt headers are what it
+    cites, and a formatter reimplemented here would drift from that one.
+    """
     return (
         RunnableParallel({
-            "context": retriever | format_docs,
+            "chunks": get_retriever(k=k) | _docs_to_chunks,
             "question": RunnablePassthrough(),
         })
-        | PROMPT
-        | model
-        | StrOutputParser()
+        | RunnablePassthrough.assign(
+            user_message=lambda x: assemble_prompt(x["question"], x["chunks"]),
+        )
+        | RunnablePassthrough.assign(
+            answer=PROMPT | _chat_model() | StrOutputParser(),
+        )
     )
 
 
-def answer_question_lc_with_context(query: str) -> tuple[str, list[dict]]:
+@lru_cache(maxsize=None)
+def _chat_model():
+    """The same model ask.py calls, reached through LangChain instead of the SDK.
+
+    model_provider is explicit: init_chat_model would infer "anthropic" from the
+    claude- prefix, but the inference is a lookup table, and being wrong about it
+    surfaces as a missing-package error rather than as a wrong provider.
+
+    No temperature. ask.py does not set one, so setting 0 here would make the
+    LangChain path deterministic and the vanilla path not - a difference the
+    strategy comparison would report as a LangChain effect. (It is also worth
+    knowing that temperature is rejected outright on Opus 5 / Sonnet 5 and the
+    4.7+ family, so a hardcoded one here is a migration hazard as well.)
+    """
+    return init_chat_model(LLM_MODEL, model_provider="anthropic", max_tokens=1024)
+
+
+@observe(name="rag-answer")
+def answer_question_lc_with_context(query: str, k: int = TOP_K) -> tuple[str, list[dict]]:
     """Drop-in equivalent to ask.answer_question_with_context.
 
-    Retrieves once (so we can return the chunks the eval needs) and runs the
-    generation chain over those same chunks.
+    The Langfuse callback is constructed per call by design - it binds to the
+    trace @observe just opened, so a module-level handler would attach every
+    question's spans to whichever trace happened to be first.
     """
-    docs = get_retriever(k=5).invoke(query)
-    model = init_chat_model("claude-sonnet-4-6", temperature=0)
-    chain = PROMPT | model | StrOutputParser()
-    answer = chain.invoke({"context": format_docs(docs), "question": query})
-    return answer, [_doc_to_chunk(d) for d in docs]
+    result = build_rag_chain(k).invoke(
+        query, config={"callbacks": [CallbackHandler()]},
+    )
+    answer, chunks = result["answer"], result["chunks"]
+    _score_answer(answer, chunks)
+    return answer, chunks
 
 
 def answer_question_lc(query: str) -> str:
@@ -465,6 +561,9 @@ if __name__ == "__main__":
         build_index()
     elif len(sys.argv) > 1 and sys.argv[1] == "ask":
         print(answer_question_lc(" ".join(sys.argv[2:])))
+        # Same reason as ask.py: the CLI exits before the SDK's background
+        # exporter would have flushed, so an untraced run looks like a bug.
+        langfuse.flush()
     else:
         retriever = get_retriever()
         results = retriever.invoke("How often must internal audits be conducted?")
@@ -474,12 +573,33 @@ if __name__ == "__main__":
             print(doc.page_content[:200])
 ```
 
+Three shape decisions in there are worth understanding rather than copying.
+
+**The chain returns `{answer, chunks, ...}`, not a string.** The obvious version
+of `answer_question_lc_with_context` retrieves once for the chunks and then runs
+a separate `PROMPT | model | parser` chain - which retrieves twice. Under the
+pacing gate a second retrieval is a real 21-second wait, so on a 39-record eval
+that mistake doubles the wall-clock. Two chained `RunnablePassthrough.assign`
+calls keep the retrieved chunks in the dict flowing through the chain, so the
+answer and the context it was built from come out together.
+
+**`build_rag_chain` and `_chat_model` are `lru_cache`d.** Every `_store()` call
+builds a fresh Chroma client and embeddings object, and `init_chat_model`
+resolves and constructs a provider client. None of that is per-question work, and
+paying it 39 times is pure latency.
+
+**The system prompt is a `SystemMessage`, not a `("system", ...)` tuple.** A
+tuple is parsed as an f-string-style template. Put a brace in `ask.py`'s prompt
+one day and this file fails with a missing-variable error, in a module that had
+nothing to do with the edit. A `SystemMessage` is passed through verbatim.
+
 Test both a real question and an out-of-corpus one, to confirm citation and
 refusal both survive the framework port:
 
 ```bash
 uv run python langchain_rag.py ask "How often must internal audits be conducted?"
-# Expect an answer citing a clause, e.g. (SQF_Food_Safety_Code.pdf, 2.5.5, p.34)
+# Expect an answer citing a clause, e.g.
+# (sqf-fundamentals-for-manufacturing-intermediate-09262019-ed-1-1-final.pdf, 2.5.5.1, p.28)
 
 uv run python langchain_rag.py ask "What is the maximum fine for an OSHA violation?"
 # Expect "Not found in the provided documents"
@@ -489,14 +609,25 @@ uv run python langchain_rag.py ask "What is the maximum fine for an OSHA violati
 
 ```python
 # Run this in a python REPL or a scratch script
-from langchain_rag import build_rag_chain
-chain = build_rag_chain()
-for token in chain.stream("What must the food defense plan contain?"):
-    print(token, end="", flush=True)
+from ask import assemble_prompt
+from langchain_rag import PROMPT, _chat_model, _docs_to_chunks, get_retriever
+
+question = "What must the food defense plan contain?"
+chunks = _docs_to_chunks(get_retriever().invoke(question))
+
+for part in (PROMPT | _chat_model()).stream(
+        {"user_message": assemble_prompt(question, chunks)}):
+    print(part.content, end="", flush=True)
 ```
 
 You wrote zero streaming code, but `.stream()` works because every component in
 the chain is a `Runnable`. That's the LCEL value proposition in one line.
+
+Streaming the *generation* sub-chain rather than `build_rag_chain()` is
+deliberate. The full chain's output is a dict (`{question, chunks, user_message,
+answer}`), so streaming it yields dict deltas rather than answer tokens - and its
+first step is a retrieval that has to complete before any token can exist
+anyway. Retrieve first, then stream the part that has something to stream.
 
 Commit:
 
@@ -885,7 +1016,7 @@ Add a `FRAMEWORKS.md` to the repo:
 # Three Implementations, One RAG
 
 This repo implements the same SQF compliance RAG three ways, evaluated against an
-identical 30-question golden set plus refusal probes, scored on five axes
+identical 34-question golden set plus 5 refusal probes, scored on five axes
 (factual, complete, relevant, citation, grounding) with deterministic clause-hit
 and refusal metrics.
 
@@ -927,11 +1058,128 @@ demonstrates raw-API, LCEL, and LangGraph implementations. That breadth on one
 repo is a strong signal: it says you understand the tools AND the fundamentals
 underneath them.
 
+### Project: serve the RAG over HTTP
+
+One more thing belongs in the repo before you call it done, and it takes twenty
+minutes: an HTTP endpoint. Everything so far is a CLI, and a CLI is not something
+another system can call. The Drupal admin UI needs an endpoint; so does anything
+else you would demo. This is also the smallest possible piece of evidence that
+you think past the notebook - reviewers notice.
+
+The entire design constraint is: **add no retrieval or generation logic**.
+`serve.py` is a wrapper around `ask.answer_question_with_context` and nothing
+else, so the CLI and the service can never drift into answering differently. If
+you find yourself reimplementing prompt assembly here, stop - that is the same
+single-source-of-truth failure the LangChain port avoided on Day 2.
+
+```python
+"""HTTP service exposing the SQF RAG pipeline for the Drupal admin UI.
+
+A thin wrapper around ask.answer_question_with_context - it adds no retrieval or
+generation logic of its own, so the CLI and the service always answer the same
+way. Run locally with:
+
+    uv run uvicorn serve:app --reload --port 8000
+
+    curl -s localhost:8000/ask -H 'content-type: application/json' \
+         -d '{"question": "How often are internal audits required?"}' | jq
+
+Auth: if the RAG_API_KEY environment variable is set, every /ask request must
+send a matching `X-API-Key` header. If it is unset, auth is disabled (fine for
+local dev, not for the live site - set it in production).
+"""
+import os
+
+from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel, Field
+
+from ask import answer_question_with_context
+
+app = FastAPI(title="cert-rag-cli", version="0.1.0")
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+
+
+class Source(BaseModel):
+    source: str
+    clause: str | None = None
+    clause_title: str | None = None
+    page: int | None = None
+
+
+class AskResponse(BaseModel):
+    answer: str
+    sources: list[Source]
+
+
+def _check_auth(x_api_key: str | None) -> None:
+    expected = os.environ.get("RAG_API_KEY")
+    if expected and x_api_key != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
+def _sources(chunks: list[dict]) -> list[Source]:
+    """Retrieved chunks as citable sources, in rank order, deduplicated.
+
+    Deduplicated because a long clause is sub-split into several chunks that
+    share a clause and page, and retrieval routinely returns more than one of
+    them - a UI listing the same citation repeatedly looks like a bug. Text is
+    deliberately not returned: the answer already quotes what it relies on, and
+    the excerpt bodies are large enough to dominate the response.
+    """
+    seen, out = set(), []
+    for c in chunks:
+        key = (c.get("source"), c.get("clause"), c.get("page"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(Source(source=c["source"], clause=c.get("clause"),
+                          clause_title=c.get("clause_title"), page=c.get("page")))
+    return out
+
+
+@app.post("/ask", response_model=AskResponse)
+def ask(req: AskRequest, x_api_key: str | None = Header(default=None)) -> AskResponse:
+    _check_auth(x_api_key)
+    answer, chunks = answer_question_with_context(req.question)
+    return AskResponse(answer=answer, sources=_sources(chunks))
+```
+
+```bash
+uv run uvicorn serve:app --reload --port 8000
+
+curl -s localhost:8000/health | jq
+curl -s localhost:8000/ask -H 'content-type: application/json' \
+     -d '{"question": "How often are internal audits required?"}' | jq
+```
+
+Three decisions in a very small file, each worth being able to explain:
+
+- **`sources` is deduplicated.** `MAX_CHARS` sub-splits a long clause into
+  several chunks that share a clause and page, and retrieval routinely returns
+  more than one of them. Passed through raw, the UI shows the same citation three
+  times and looks broken. This is the clause-aware chunker's one sharp edge at
+  the presentation layer, and it is worth knowing where it shows up.
+- **Chunk text is not returned.** The answer already quotes what it relies on,
+  and at `TOP_K=14` the excerpt bodies would dominate the response payload. The
+  client needs to know *which clauses* backed the answer, not to re-read them.
+- **Auth is opt-in via `RAG_API_KEY`.** Unset means no auth, which is right for
+  local dev and wrong for the live site. Making it an env var rather than a
+  config flag means the production posture is a deploy-time decision, not a code
+  change - but say out loud that unset-means-open is the tradeoff you accepted.
+
 Push:
 
 ```bash
-git add FRAMEWORKS.md README.md
-git commit -m "Day 7 (wk5): FRAMEWORKS.md comparison, README updated"
+git add FRAMEWORKS.md README.md serve.py
+git commit -m "Day 7 (wk5): FRAMEWORKS.md comparison, HTTP service, README updated"
 git push
 ```
 
@@ -942,6 +1190,8 @@ git push
 - [ ] `langgraph_rag.py` - agentic RAG with grade-and-rewrite loop, returns chunks
 - [ ] All three implementations evaluated on the same golden set, including citation and refusal metrics
 - [ ] `FRAMEWORKS.md` comparison written, compliance metrics first
+- [ ] `serve.py` answers over HTTP with deduped clause citations, and the CLI and
+      the service share one code path
 - [ ] You can write a basic LCEL chain (`prompt | model | parser`) from memory
 - [ ] You can explain when to use LCEL vs LangGraph in one sentence
 - [ ] You can explain `RunnableParallel` + `RunnablePassthrough` in the RAG pattern

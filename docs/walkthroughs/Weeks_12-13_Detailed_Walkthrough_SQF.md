@@ -92,7 +92,7 @@ Open your `RobertSnyder_AI_SA_Resume.docx` and make these updates:
 
 - *Commerce AI Ops Agent* - Multi-tool agent (orchestrator-workers) for e-commerce merchandising, built in raw Anthropic SDK and LangGraph, with brand-voice guardrails, Langfuse observability, and outcome evaluation. Deployed on AWS Bedrock. [github link]
 - *Drupal MCP Server* - Model Context Protocol server exposing Drupal development tools (hook explanation, service parsing, entity scaffolding) to any MCP-compatible AI assistant. [github link]
-- *SQF Compliance RAG + Evaluation Framework* - Retrieval system over SQF food-safety certification documents (PDF/DOCX, clause-aware chunking) comparing three strategies (vanilla, hybrid, rerank), with a 30-question golden set plus refusal probes, deterministic clause-citation and refusal metrics, and five-axis LLM-as-judge scoring. [github link]
+- *SQF Compliance RAG + Evaluation Framework* - Retrieval system over SQF food-safety certification documents (PDF/DOCX, clause-aware chunking) comparing three strategies (vanilla, hybrid, rerank), with a 34-question golden set plus 5 refusal probes, deterministic clause-citation and refusal metrics, and five-axis LLM-as-judge scoring. [github link]
 - *Brand-Voice LoRA* - QLoRA fine-tune adapting a small model to a specific brand voice, with an honest fine-tune-vs-prompting evaluation. [HF link]
 
 **Applied AI Skills section** - now everything is demonstrated, not claimed. You can drop any hedging.
