@@ -7,8 +7,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Repo root on the path so the RAG_IMPL dispatch below can import ask /
+# langchain_rag / langgraph_rag by top-level name.
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from ask import answer_question_with_context
 
 from evals.judge import judge
 from evals.metrics import (answer_cites_expected_clause, clause_hit_at_k,
@@ -36,6 +37,16 @@ FIELDNAMES = [
     "reasoning", "elapsed_sec",
 ]
 
+RAG_IMPL = os.getenv("RAG_IMPL", "raw")  # raw | langchain | langgraph
+
+if RAG_IMPL == "raw":
+    from ask import answer_question_with_context
+elif RAG_IMPL == "langchain":
+    from langchain_rag import answer_question_lc_with_context as answer_question_with_context
+elif RAG_IMPL == "langgraph":
+    from langgraph_rag import answer_question_graph_with_context as answer_question_with_context  # Day 5
+else:
+    raise ValueError(f"Unknown RAG_IMPL: {RAG_IMPL}")
 
 def _blank_row(rec: dict) -> dict:
     return {

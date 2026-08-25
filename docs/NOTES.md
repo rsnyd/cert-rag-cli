@@ -31,6 +31,14 @@ noise floor. This section is for the things that never became an experiment.
   `evals/check_metrics.py` pins the phrasings.
 - **TOP_K and refusal.** More context did not tempt the model into answering
   something it should refuse: across the 5/10/14 sweep the probe set stayed 5/5.
+- **Exported env vars shadow `.env` silently.** `env.py` deliberately lets real
+  environment variables win, so a stale `LANGFUSE_PUBLIC_KEY` left exported in a
+  shell beat the working pair in `.env` and every run in that terminal
+  authenticated as the wrong project. The only visible symptom was a 401 the SDK
+  reports as "the server rejected the credentials" - nothing points at the
+  shadowing, and the key printed in the banner is the one clue that it is not the
+  key you edited. Diagnosis is `env | grep -i langfuse` before touching `.env` at
+  all; the fix was `unset`, not a new key pair.
 
 ## Interview talking points
 
