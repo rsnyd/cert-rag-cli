@@ -352,7 +352,16 @@ def build_index():
     return vectorstore
 
 
-def get_retriever(k: int = 5):
+@lru_cache(maxsize=None)
+def get_retriever(k: int = TOP_K):
+    """Cached per k: _store() opens a fresh Chroma client and a fresh embeddings
+    object every call, which is startup work, not per-question work. It matters
+    for langgraph_rag.py, whose retrieve node runs once per loop iteration.
+
+    k defaults to TOP_K for the same reason the prompt is imported rather than
+    restated - a different k here would show up in the Day 6 three-way
+    comparison as a framework effect.
+    """
     return _store().as_retriever(search_kwargs={"k": k})
 
 
@@ -787,22 +796,45 @@ The graph:
 
 ### Project: `langgraph_rag.py`
 
+Note what this file does **not** contain: no system prompt, no model string, no k,
+no excerpt formatter. All four are imported, for the same reason Day 3 gave -
+the Day 6 comparison is only about the loop, so everything else has to be
+byte-identical to the other two implementations. The one new import is
+`ask.format_excerpts`, split out of `assemble_prompt` for this file: the grader
+needs the excerpts on their own, without the question and answer instruction
+wrapped around them.
+
 ```python
 """Day 5: Agentic RAG with LangGraph. Retrieve -> grade -> (rewrite & retry | generate).
 
 Carries the retrieved chunks in state so the answer function can return them for
 the eval, matching ask.answer_question_with_context.
+
+Everything that the Day 6 comparison holds constant is imported, not restated:
+the system prompt, the model, k and the excerpt formatter all come from ask.py
+via langchain_rag.py. The only thing this file adds is the loop - which is the
+whole point of running it as a third implementation.
 """
+from functools import lru_cache
 from typing import TypedDict
 
-from langchain.chat_models import init_chat_model
+from langchain_core.messages import SystemMessage
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langfuse import observe
+from langfuse.langchain import CallbackHandler
+from langgraph.graph import END, START, StateGraph
 
-from langgraph.graph import StateGraph, START, END
+import env  # noqa: F401  - .env before any os.environ read, same as every entry point
+from ask import SYSTEM_PROMPT, TOP_K, _score_answer, assemble_prompt, format_excerpts
+from langchain_rag import _chat_model, _docs_to_chunks, get_retriever
+from tracing import langfuse
 
-from langchain_rag import get_retriever, format_docs, _doc_to_chunk
-
-model = init_chat_model("claude-sonnet-4-6", temperature=0)
+# Each retry costs a full retrieval, and under the Voyage pacing gate a
+# retrieval is a real 21 seconds. Two attempts is already up to ~60s of waiting
+# on a question the grader keeps rejecting; three would make a 39-record eval
+# untenable on the free tier.
+MAX_ATTEMPTS = 2
 
 
 # The state carried through the graph
@@ -816,55 +848,86 @@ class RAGState(TypedDict):
     relevant: bool
 
 
-def retrieve_node(state: RAGState) -> RAGState:
-    docs = get_retriever(k=5).invoke(state["question"])
-    state["context"] = format_docs(docs)
-    state["chunks"] = [_doc_to_chunk(d) for d in docs]
-    return state
-
-
-def grade_node(state: RAGState) -> RAGState:
-    """Ask the model whether the retrieved context can answer the question."""
-    grade_prompt = ChatPromptTemplate.from_messages([
-        ("system", "You judge whether the SQF documentation excerpts are sufficient to answer the question. Reply with only 'yes' or 'no'."),
-        ("human", "Excerpts:\n{context}\n\nQuestion: {question}\n\nAre the excerpts sufficient?"),
+@lru_cache(maxsize=None)
+def _grader():
+    """Yes/no relevance judge. Same model as the answer path - a cheaper grader
+    would be a reasonable optimization, but it would also mean the loop's
+    decisions came from a different model than the comparison is about."""
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You judge whether the SQF documentation excerpts are "
+                   "sufficient to answer the question. Reply with only 'yes' or 'no'."),
+        ("human", "Excerpts:\n{context}\n\nQuestion: {question}\n\n"
+                  "Are the excerpts sufficient?"),
     ])
-    verdict = (grade_prompt | model).invoke(
-        {"context": state["context"], "question": state["question"]}
-    ).content.strip().lower()
-    state["relevant"] = verdict.startswith("yes")
-    return state
+    return prompt | _chat_model() | StrOutputParser()
 
 
-def rewrite_node(state: RAGState) -> RAGState:
-    """Rewrite the query to retrieve better context, then loop back."""
-    rewrite_prompt = ChatPromptTemplate.from_messages([
-        ("system", "Rewrite the user's question to be more specific and retrieval-friendly for SQF certification documentation. Use the vocabulary of the SQF code (clauses, requirements, records, verification). Return only the rewritten question."),
+@lru_cache(maxsize=None)
+def _rewriter():
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "Rewrite the user's question to be more specific and "
+                   "retrieval-friendly for SQF certification documentation. Use the "
+                   "vocabulary of the SQF code (clauses, requirements, records, "
+                   "verification). Return only the rewritten question."),
         ("human", "{question}"),
     ])
-    state["question"] = (rewrite_prompt | model).invoke(
-        {"question": state["original_question"]}
-    ).content.strip()
-    state["attempts"] = state.get("attempts", 0) + 1
-    return state
+    return prompt | _chat_model() | StrOutputParser()
 
 
-def generate_node(state: RAGState) -> RAGState:
-    """Generate with the same compliance prompt as ask.py: cite clauses, refuse when absent."""
-    gen_prompt = ChatPromptTemplate.from_messages([
-        ("system", "You answer questions about SQF certification documents for a practitioner. Answer only from the excerpts. If they do not contain the requirement, say \"Not found in the provided documents\" and stop. Cite the clause for every requirement as (source, clause, p.page). Use plain hyphens, never em dashes."),
-        ("human", "Documentation excerpts:\n{context}\n\nQuestion: {question}\n\nAnswer using only the excerpts above, citing clauses."),
+@lru_cache(maxsize=None)
+def _generator():
+    """The compliance prompt, imported rather than paraphrased.
+
+    SYSTEM_PROMPT arrives as a SystemMessage for the reason langchain_rag.py
+    documents: a ("system", ...) tuple is parsed as a template, so a brace in
+    ask.py's prompt would fail here. The human turn is built by
+    ask.assemble_prompt, so the model sees the same bytes as the other two
+    implementations - including the refusal instruction, which the eval's probe
+    records depend on being present verbatim.
+    """
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessage(content=SYSTEM_PROMPT),
+        ("human", "{user_message}"),
     ])
-    # Answer the user's ORIGINAL question, even though retrieval may have used a rewrite.
-    state["answer"] = (gen_prompt | model).invoke(
+    return prompt | _chat_model() | StrOutputParser()
+
+
+def retrieve_node(state: RAGState) -> dict:
+    docs = get_retriever(k=TOP_K).invoke(state["question"])
+    chunks = _docs_to_chunks(docs)
+    return {"chunks": chunks, "context": format_excerpts(chunks)}
+
+
+def grade_node(state: RAGState) -> dict:
+    """Ask the model whether the retrieved context can answer the question."""
+    verdict = _grader().invoke(
         {"context": state["context"], "question": state["original_question"]}
-    ).content
-    return state
+    )
+    return {"relevant": verdict.strip().lower().startswith("yes")}
+
+
+def rewrite_node(state: RAGState) -> dict:
+    """Rewrite the query to retrieve better context, then loop back.
+
+    Rewrites the *current* question, not the original one. Rewriting the
+    original every time makes attempt 2 re-issue attempt 1's query almost
+    verbatim, so the second retrieval returns the same chunks the grader has
+    already rejected and the retry is 21 seconds of nothing.
+    """
+    rewritten = _rewriter().invoke({"question": state["question"]}).strip()
+    return {"question": rewritten, "attempts": state.get("attempts", 0) + 1}
+
+
+def generate_node(state: RAGState) -> dict:
+    """Generate with the same compliance prompt as ask.py: cite clauses, refuse when absent."""
+    # Answer the user's ORIGINAL question, even though retrieval may have used a rewrite.
+    user_message = assemble_prompt(state["original_question"], state["chunks"])
+    return {"answer": _generator().invoke({"user_message": user_message})}
 
 
 def should_continue(state: RAGState) -> str:
     """Conditional edge: generate if relevant or out of attempts, else rewrite."""
-    if state.get("relevant") or state.get("attempts", 0) >= 2:
+    if state.get("relevant") or state.get("attempts", 0) >= MAX_ATTEMPTS:
         return "generate"
     return "rewrite"
 
@@ -884,9 +947,37 @@ graph.add_edge("generate", END)
 app = graph.compile()
 
 
+def _run(query: str) -> dict:
+    """Invoke the graph with the Langfuse callback bound to the current trace.
+
+    Constructed per call for the reason langchain_rag.py documents: the handler
+    binds to whatever trace is open, so a module-level one would attach every
+    question's spans to whichever trace happened to be first.
+    """
+    return app.invoke(
+        {"question": query, "original_question": query, "attempts": 0},
+        config={"callbacks": [CallbackHandler()]},
+    )
+
+
+@observe(name="rag-answer")
 def answer_question_graph_with_context(query: str) -> tuple[str, list[dict]]:
-    result = app.invoke({"question": query, "original_question": query, "attempts": 0})
-    return result["answer"], result.get("chunks", [])
+    """Drop-in equivalent to ask.answer_question_with_context.
+
+    Scored here rather than in the graph so the refusal and citation_grounding
+    scores land on the same trace names the other two implementations use -
+    without them the Day 6 false-refusal comparison has nothing to read.
+    """
+    result = _run(query)
+    answer, chunks = result["answer"], result.get("chunks", [])
+    # update_current_span, not update_current_trace - the latter is not on the
+    # v3 client. Inside @observe this is the trace's root span anyway, so the
+    # loop count is visible at the top of the trace where it is useful.
+    langfuse.update_current_span(
+        metadata={"rag_impl": "langgraph", "attempts": result.get("attempts", 0)},
+    )
+    _score_answer(answer, chunks)
+    return answer, chunks
 
 
 def answer_question_graph(query: str) -> str:
@@ -895,12 +986,16 @@ def answer_question_graph(query: str) -> str:
 
 if __name__ == "__main__":
     import sys
+
     query = " ".join(sys.argv[1:]) or "What has to happen when a critical limit at a CCP is exceeded?"
-    result = app.invoke({"question": query, "original_question": query, "attempts": 0})
+    result = _run(query)
     print(f"Q: {query}\n")
     print(f"Attempts: {result.get('attempts', 0)}")
     print(f"Retrieval question used: {result['question']}")
     print(f"\nAnswer:\n{result['answer']}")
+    # Same reason as ask.py: the CLI exits before the SDK's background exporter
+    # would have flushed, so an untraced run looks like a bug.
+    langfuse.flush()
 ```
 
 Run it on a hard, multi-clause question:
@@ -911,12 +1006,20 @@ uv run python langgraph_rag.py "How do corrective action and verification requir
 
 Watch the output. On a hard multi-concept question you may see `Attempts: 1` - the
 grader judged the first retrieval insufficient, rewrote the query, and retried.
-That loop is the agent making a decision. Then run it on a probe to confirm the
-loop does not manufacture a false answer:
+That loop is the agent making a decision. Budget for the wait: each retry is a
+second retrieval, and under the Voyage pacing gate a retrieval is a real 21
+seconds.
+
+Then run it on a probe to confirm the loop does not manufacture a false answer.
+Use one of the five scored probes from `evals/golden.jsonl` rather than an
+invented question, so what you see here is what the eval will score on Day 6:
 
 ```bash
-uv run python langgraph_rag.py "What does BRCGS require for the pre-production hygiene check?"
-# Expect: after burning its retries, it still refuses - "Not found in the provided documents"
+uv run python langgraph_rag.py "What does ISO 22000 require for the qualifications of the food safety team leader?"
+# probe-iso-22000-team-leader, tagged cross-standard
+# Expect: Attempts: 2 - it burns both retries and still refuses with
+# "Not found in the provided documents". Rewriting an out-of-corpus question
+# just produces a more fluent out-of-corpus question.
 ```
 
 ### Visualize the graph (optional, nice for your README)
@@ -928,12 +1031,28 @@ print(app.get_graph().draw_mermaid())
 ```
 
 It prints a Mermaid diagram of your graph that renders directly in a GitHub
-README.
+README. The dotted edges out of `grade` are the conditional ones:
+
+```
+graph TD;
+	__start__([__start__]):::first
+	retrieve(retrieve)
+	grade(grade)
+	rewrite(rewrite)
+	generate(generate)
+	__end__([__end__]):::last
+	__start__ --> retrieve;
+	grade -.-> generate;
+	grade -.-> rewrite;
+	retrieve --> grade;
+	rewrite --> retrieve;
+	generate --> __end__;
+```
 
 Commit:
 
 ```bash
-git add langgraph_rag.py
+git add langgraph_rag.py ask.py langchain_rag.py
 git commit -m "Day 5 (wk5): agentic RAG in LangGraph with grade-and-rewrite loop"
 ```
 
@@ -967,11 +1086,21 @@ are the compliance metrics, so lead with them:
 | False refusal rate | (yours) | ~same | lower (retries before giving up) |
 | Citation correctness | (yours) | ~same | ~same |
 | Overall (5-axis) | (yours) | ~same | better on hard questions |
-| Lines of code | ~180 | ~90 | ~130 |
+| Lines of code | ~205 | ~255 | ~190 |
 | Avg latency per query | (Langfuse) | ... | higher (extra grade/rewrite calls) |
 | Avg cost per query | ... | ... | higher (extra calls) |
 | Debuggability | high (all yours) | medium | medium |
 | Setup complexity | low | medium | medium-high |
+
+Be honest about the lines-of-code row: on this corpus LCEL came out *longer* than
+the raw API, not shorter. Two of this repo's constraints ate the savings. Voyage's
+free tier forced `PacedVoyageEmbeddings` because `langchain_voyageai` builds its
+own client with `max_retries=0`, and the single-source-of-truth rule meant the
+LCEL path had to explain, in comments, every place it imports from `ask.py`
+instead of restating. The generic "framework = fewer lines" claim assumes the
+framework's defaults fit you. Here two of them did not, and working around a
+default costs more than writing the thing yourself would have. That is a better
+interview answer than the line count would have been.
 
 The LangGraph version will cost more and run slower per query (it sometimes makes
 2-3x the model calls) but should reduce false refusals and score better on the

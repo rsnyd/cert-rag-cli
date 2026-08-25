@@ -123,7 +123,16 @@ def build_index():
     return vectorstore
 
 
-def get_retriever(k: int = 5):
+@lru_cache(maxsize=None)
+def get_retriever(k: int = TOP_K):
+    """Cached per k: _store() opens a fresh Chroma client and a fresh embeddings
+    object every call, which is startup work, not per-question work. It matters
+    for langgraph_rag.py, whose retrieve node runs once per loop iteration.
+
+    k defaults to TOP_K for the same reason the prompt is imported rather than
+    restated - a different k here would show up in the Day 6 three-way
+    comparison as a framework effect.
+    """
     return _store().as_retriever(search_kwargs={"k": k})
 
 

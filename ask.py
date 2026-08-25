@@ -69,9 +69,15 @@ def retrieve(query: str, k: int = TOP_K) -> list[dict]:
     return chunks
 
 
-def assemble_prompt(query: str, chunks: list[dict]) -> str:
+def format_excerpts(chunks: list[dict]) -> str:
     """Build the context block. The clause and page in each header are what the
-    model cites, so they must survive retrieval to get here."""
+    model cites, so they must survive retrieval to get here.
+
+    Split out of assemble_prompt because langgraph_rag.py's grader needs the
+    excerpts on their own, without the question and answer instruction wrapped
+    around them. A second formatter there would be the same drift risk as a
+    second copy of the prompt.
+    """
     blocks = []
     for i, c in enumerate(chunks, 1):
         header = f"[Excerpt {i} | {c['source']}"
@@ -81,7 +87,12 @@ def assemble_prompt(query: str, chunks: list[dict]) -> str:
             header += f" | p.{c['page']}"
         header += "]"
         blocks.append(f"{header}\n{c['text']}")
-    context = "\n\n---\n\n".join(blocks)
+    return "\n\n---\n\n".join(blocks)
+
+
+def assemble_prompt(query: str, chunks: list[dict]) -> str:
+    """Wrap the excerpt block in the question and the answer instruction."""
+    context = format_excerpts(chunks)
     return f"""Documentation excerpts:
 
 {context}
