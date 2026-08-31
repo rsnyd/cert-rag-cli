@@ -101,6 +101,58 @@ uv run python ask.py "How often do we calibrate metal detectors?"
 Answers cite clauses as `(source, clause, p.page)`. If the retrieved excerpts do
 not contain the requirement, the answer is `Not found in the provided documents`.
 
+## Alternate implementations
+
+The same pipeline exists three ways, so the framework question can be answered
+with numbers instead of opinion. All three share the corpus, the chunks, the
+system prompt, the model and `TOP_K`, and all three are selectable in the eval
+harness via `RAG_IMPL`:
+
+```bash
+RAG_IMPL=raw       uv run python evals/run_eval.py raw_api   "raw Anthropic SDK"
+RAG_IMPL=langchain uv run python evals/run_eval.py langchain "LCEL chain"
+RAG_IMPL=langgraph uv run python evals/run_eval.py langgraph "agentic, grade+rewrite"
+```
+
+- **`ask.py`** - raw Anthropic SDK. **This is production.**
+- **`langchain_rag.py`** - the same retrieve-then-answer flow as one LCEL chain,
+  over a separate index (`.chroma_langchain/`) so experiments cannot corrupt the
+  index the eval baseline was measured on.
+- **`langgraph_rag.py`** - agentic. Grades its own retrieval and rewrites the
+  query when the excerpts look insufficient, instead of letting the compliance
+  prompt refuse on a clause that retrieval merely missed.
+
+### The agentic loop
+
+```mermaid
+graph TD;
+    start([START]) --> retrieve
+    retrieve[retrieve<br/>top-14 clause chunks] --> grade
+    grade{grade<br/>excerpts sufficient?}
+    grade -->|no, retries left| rewrite
+    grade -->|yes, or out of retries| generate
+    rewrite[rewrite<br/>more specific SQF query] --> retrieve
+    generate[generate<br/>cite clauses, or refuse] --> finish([END])
+```
+
+The back-edge from `rewrite` to `retrieve` is the whole point - it is the one
+thing an LCEL chain cannot express, since a chain is a pipe and cannot feed its
+own input. Retrieval chases the rewritten query; generation always answers the
+question the user actually asked.
+
+Capped at two rewrites. Each retry is another retrieval, and under the Voyage
+free tier that is a real 21 seconds, so a question that exhausts its retries
+costs three retrievals and six model calls against one and two on the raw path.
+Out-of-corpus questions always exhaust them - rewriting a question the corpus
+cannot answer just produces a more fluent question the corpus cannot answer -
+so the refusal probes stay refusals and get slower, which is the trade.
+
+Regenerate the diagram after changing the graph:
+
+```bash
+uv run python -c "from langgraph_rag import app; print(app.get_graph().draw_mermaid())"
+```
+
 ## Notes on choices
 
 **Clause-aware chunking instead of a fixed window.** The obvious default is to
@@ -129,6 +181,7 @@ confident fabrication is the one outcome the system is designed to prevent.
 
 ## Architecture
 
+```
 data/source/*.pdf,docx
   -> ingest.py     extract, OCR scanned pages, strip running headers
   -> data/raw/*.jsonl
@@ -136,20 +189,35 @@ data/source/*.pdf,docx
   -> data/chunks.jsonl
   -> embed.py      Voyage voyage-3-lite -> Chroma (sqf_docs)
   -> ask.py        retrieve -> assemble cited prompt -> Claude Sonnet 4.6
+```
 
-Retrieval strategies (RETRIEVAL_STRATEGY env var):
-  vanilla  cosine similarity, top_k=14
-  hybrid   BM25 + cosine fused with RRF (clause-safe tokenizer)
-  rerank   hybrid candidates reranked by Voyage rerank-2.5
+Retrieval strategies (`RETRIEVAL_STRATEGY` env var):
+
+```
+vanilla  cosine similarity, top_k=14
+hybrid   BM25 + cosine fused with RRF (clause-safe tokenizer)
+rerank   hybrid candidates reranked by Voyage rerank-2.5
+```
+
+Pipeline implementations (`RAG_IMPL` env var, eval harness only):
+
+```
+raw        ask.py            production; Anthropic SDK by hand
+langchain  langchain_rag.py  same flow as one LCEL chain, over .chroma_langchain/
+langgraph  langgraph_rag.py  agentic; grade retrieval, rewrite and retry
+```
 
 Evaluation:
-  evals/golden.jsonl     34 scored questions + 5 out-of-corpus refusal probes
-  evals/validate.py      golden-set schema, clause grounding, area coverage
-  evals/metrics.py       deterministic clause_hit@k, refusal, citation grounding
-  evals/check_metrics.py regression cases for metrics.py
-  evals/judge.py         Claude Sonnet 4.6, five axes including citation and grounding
-  evals/run_eval.py      runner, CSV output, Langfuse scores
-  evals/analyze.py       summarize / compare / compare_three
+
+```
+evals/golden.jsonl     34 scored questions + 5 out-of-corpus refusal probes
+evals/validate.py      golden-set schema, clause grounding, area coverage
+evals/metrics.py       deterministic clause_hit@k, refusal, citation grounding
+evals/check_metrics.py regression cases for metrics.py
+evals/judge.py         Claude Sonnet 4.6, five axes including citation and grounding
+evals/run_eval.py      runner, CSV output, Langfuse scores
+evals/analyze.py       summarize / compare / compare_three
+```
 
 Observability: Langfuse, self-hosted. Every run is a session; every question is
 a trace with judge scores attached.
