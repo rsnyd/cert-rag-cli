@@ -12,6 +12,13 @@ answer *only* from it. Getting a requirement subtly wrong in a food-safety
 context is worse than not answering, so the system is built to cite or refuse
 rather than fill gaps from general knowledge.
 
+The same pipeline is implemented three ways - raw Anthropic SDK, LangChain LCEL,
+and an agentic LangGraph graph - over one corpus, one prompt and one golden set,
+so the framework question can be answered with measurements instead of taste.
+[`FRAMEWORKS.md`](FRAMEWORKS.md) is the comparison and when to reach for which;
+Experiment 4 of [`evals/EVAL_REPORT.md`](evals/EVAL_REPORT.md) is the run it
+rests on.
+
 ## Corpus
 
 The SQF (Safe Quality Food) certification program for a single facility, as
@@ -122,6 +129,15 @@ RAG_IMPL=langgraph uv run python evals/run_eval.py langgraph "agentic, grade+rew
   query when the excerpts look insufficient, instead of letting the compliance
   prompt refuse on a clause that retrieval merely missed.
 
+Measured over all 39 golden records, the three arms retrieve identically
+(clause hit@3 97.1%, probe refusal 5/5, false refusal 1/34 in every arm) and no
+arm separates on overall quality: 4.58 raw, 4.54 LCEL, 4.60 LangGraph against a
+0.06 judge-noise floor. The loop fired on 6 of 39 records and cost roughly 2.15x
+the input tokens for it. Raw stays in production on that basis.
+[`FRAMEWORKS.md`](FRAMEWORKS.md) covers what each approach costs and buys;
+Experiment 4 of [`evals/EVAL_REPORT.md`](evals/EVAL_REPORT.md) has the per-axis
+tables and the caveats.
+
 ### The agentic loop
 
 ```mermaid
@@ -142,8 +158,9 @@ question the user actually asked.
 
 Capped at two rewrites. Each retry is another retrieval, and under the Voyage
 free tier that is a real 21 seconds, so a question that exhausts its retries
-costs three retrievals and six model calls against one and two on the raw path.
-Out-of-corpus questions always exhaust them - rewriting a question the corpus
+costs three retrievals and six model calls (three grades, two rewrites, one
+generation) against one and one on the raw path. Out-of-corpus questions always
+exhaust them - rewriting a question the corpus
 cannot answer just produces a more fluent question the corpus cannot answer -
 so the refusal probes stay refusals and get slower, which is the trade.
 
@@ -217,7 +234,44 @@ evals/check_metrics.py regression cases for metrics.py
 evals/judge.py         Claude Sonnet 4.6, five axes including citation and grounding
 evals/run_eval.py      runner, CSV output, Langfuse scores
 evals/analyze.py       summarize / compare / compare_three
+evals/EVAL_REPORT.md   measured results: chunking, top_k, strategy, framework
+FRAMEWORKS.md         the three implementations compared, and when to use which
 ```
 
 Observability: Langfuse, self-hosted. Every run is a session; every question is
 a trace with judge scores attached.
+
+## Curriculum walkthroughs
+
+This repo was built against a week-by-week curriculum, reworked from a frozen
+`drupal-rag-cli` build: same architecture, new corpus. The walkthroughs live in
+[`docs/walkthroughs/`](docs/walkthroughs/), split by week pair:
+
+```
+Weeks_1-2   LLM API fundamentals, then RAG from scratch: ingest.py (PDF/DOCX,
+            OCR fallback, tracked-change extraction), chunk.py (clause-aware
+            chunking), embed.py, ask.py
+Weeks_3-4   the golden set and validate.py, deterministic metrics and
+            check_metrics.py, the five-axis judge, the eval runner and
+            analyze.py, Langfuse, then hybrid retrieval and reranking
+Weeks_5-6   LangChain/LCEL and LangGraph over the same clause chunks, evaluated
+            on the same golden set; then fine-tuning, LoRA and QLoRA
+Weeks_7-9   agents - a separate project (Commerce AI Ops), raw API then LangGraph
+Weeks_10-11 cloud deployment and the certification sprint
+Weeks_12-13 portfolio, publishing, applying
+```
+
+Weeks 1-6 are this repo. Weeks 7-11 build a different project and only reference
+this one. Most of the curriculum is corpus-agnostic and ported as-is; the delta
+is concentrated in ingestion (PDF/DOCX extraction, header stripping, OCR,
+tracked changes, clause-aware chunking), in a golden set whose ground truth is
+expected clause references, in one tokenizer change so BM25 does not shred
+clause numbers like `2.4.3`, and in a headline metric that is clause-citation
+accuracy rather than answer quality alone.
+
+**Keeping these honest.** The code in this repo is the source of truth. Every
+"complete file" code block in Weeks 1-6 is a verbatim copy of the module it
+names, so when you change a module, update the block. Measured numbers belong in
+[`evals/EVAL_REPORT.md`](evals/EVAL_REPORT.md) and [`docs/NOTES.md`](docs/NOTES.md);
+where a walkthrough shows a figure it should be clearly illustrative, so it does
+not drift into contradicting the report.

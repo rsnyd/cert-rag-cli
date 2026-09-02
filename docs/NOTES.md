@@ -6,8 +6,10 @@ I make them. Interview talking points go at the bottom.
 ## Observations
 
 Measured results live in `evals/EVAL_REPORT.md` - baseline, the chunking
-ablation, the TOP_K sweep, the three-way strategy comparison, and the judge
-noise floor. This section is for the things that never became an experiment.
+ablation, the TOP_K sweep, the three-way strategy comparison, the raw/LCEL/
+LangGraph implementation comparison, and the judge noise floor. `FRAMEWORKS.md`
+reads that last one back as a recommendation. This section is for the things
+that never became an experiment.
 
 - **Clause regex.** One pattern was not enough. `_CLAUSE_INLINE`
   (`2.4.3.1 Internal Audits`) matches the SOPs and the audit report; both

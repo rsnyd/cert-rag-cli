@@ -355,10 +355,18 @@ At `VOYAGE_MIN_INTERVAL_SEC=21` a second retrieval costs 21s before any model
 call, which is most of the probe gap. The scored-only row is the more honest
 comparison of the pipelines themselves, and it is 1.5s.
 
-LangGraph is the shortest of the three implementations (191 lines against raw's
-205 and LCEL's 255; 140/149/174 excluding blanks and comments) because the graph
-declaration replaces hand-written control flow. That is a real result and it is
-the only dimension on which the agentic arm clearly wins.
+The line counts are increments, not standalone implementations, and the row is
+easy to misread. `langchain_rag.py` imports the prompt, model, `TOP_K`, excerpt
+formatter and scoring from `ask.py` plus the rate-limit gate from
+`retrievers/embed.py`; `langgraph_rag.py` imports from both, taking its
+retriever, chat model and document conversion from `langchain_rag.py`. So
+LangGraph's 191 lines are what the loop costs on top of the other two arms, not
+a self-contained pipeline, and the raw arm's 205 excludes the 167 lines of
+`retrievers/embed.py` and `retrievers/vanilla.py` that its vanilla path needs.
+Read the row as "lines to add this arm", under which the arm implemented last is
+flattered by everything already in the tree. The defensible statement is
+narrower: expressing the loop as a graph declaration took 191 lines where
+hand-writing the same control flow would have taken more.
 
 ## Resulting production configuration
 
