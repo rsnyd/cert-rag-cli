@@ -261,6 +261,105 @@ Rerank costs two Voyage calls per question against one, so on the free tier's
 3 RPM / 10K TPM it is roughly double the wall-clock and needs its candidate set
 trimmed to a token budget. `retrievers/rerank.py` documents the measured budget.
 
+## Experiment 4: pipeline implementation (raw API vs LCEL vs LangGraph agentic)
+
+Three full runs over the identical golden set, with chunking, prompt, model and
+`TOP_K=14` held fixed. The variable is the framework the pipeline is written in,
+not the retrieval it performs: all three call the same vanilla retriever, and
+`SYSTEM_PROMPT` and `assemble_prompt` are imported from `ask.py` rather than
+paraphrased, so the model sees the same bytes in every arm. LangGraph adds a
+grade-and-rewrite loop around retrieval (`MAX_ATTEMPTS = 2`): grade the retrieved
+context, and if the model judges it insufficient, rewrite the query and retrieve
+once more before generating.
+
+```
+RAG_IMPL=raw       uv run python evals/run_eval.py raw_api   "raw Anthropic SDK"
+RAG_IMPL=langchain uv run python evals/run_eval.py langchain "LCEL chain"
+RAG_IMPL=langgraph uv run python evals/run_eval.py langgraph "agentic, grade+rewrite"
+```
+
+| Metric           | Raw API | LCEL | LangGraph |  L-R |  G-R |
+| ---------------- | ------- | ---- | --------- | ---- | ---- |
+| probe refusal %  |   100.0 | 100.0|     100.0 | +0.0 | +0.0 |
+| false refusal %  |     2.9 |  2.9 |       2.9 | +0.0 | +0.0 |
+| hit@1 %          |    85.3 | 85.3 |      85.3 | +0.0 | +0.0 |
+| hit@3 %          |    97.1 | 97.1 |      97.1 | +0.0 | +0.0 |
+| hit@5 %          |    97.1 | 97.1 |      97.1 | +0.0 | +0.0 |
+| cites expected % |    97.1 | 97.1 |      97.1 | +0.0 | +0.0 |
+| citation         |    4.56 | 4.53 |      4.65 |-0.03 |+0.09 |
+| grounding        |    4.82 | 4.82 |      4.94 |+0.00 |+0.12 |
+| factual          |    4.76 | 4.65 |      4.76 |-0.12 |+0.00 |
+| complete         |    4.29 | 4.29 |      4.24 |+0.00 |-0.06 |
+| relevant         |    4.47 | 4.38 |      4.41 |-0.09 |-0.06 |
+| **overall**      |    4.58 | 4.54 |      4.60 |-0.05 |+0.02 |
+
+By difficulty: easy 4.78/4.73/4.82, medium 4.40/4.48/4.57, hard 4.58/4.40/4.42.
+
+Non-quality dimensions, for the same three runs:
+
+| Dimension               | Raw API | LCEL | LangGraph |
+| ----------------------- | ------- | ---- | --------- |
+| Lines of code           |     205 |  255 |       191 |
+| Mean latency / query    |   17.2s |17.5s |     23.9s |
+| ...scored records only  |   16.8s |17.2s |     18.3s |
+| ...probe records only   |   20.2s |19.5s |     62.3s |
+| Full-run wall clock     | 11.2min |11.3min|  15.6min |
+| Input tokens / query    |      1x |   ~1x | ~2.15x (est) |
+
+Five observations:
+
+1. **Retrieval is bit-identical across all three arms.** Every retrieval metric
+   matches to the decimal. This is the expected result for raw vs LCEL, which
+   differ only in plumbing, but it is the interesting one for LangGraph: the
+   agentic loop was supposed to retry its way to better retrieval and did not
+   move a single one of the six figures. The loop fired on 6 of 39 records - all
+   5 probes plus `corrective-action-m1`. On the other 33 the grader judged the
+   first context sufficient, so retrieval was one vanilla call, exactly as in the
+   other two arms. A retry loop can only help where the grader rejects something,
+   and at this corpus and k it almost never does.
+2. **The one scored question that looped is the one that improved.**
+   `corrective-action-m1` goes 2.60 -> 3.60, the largest single-question movement
+   in the experiment. This is the mechanism working as designed, on n=1. It is
+   evidence that the loop can help, not evidence about how often it will.
+3. **No arm separates on overall.** +0.02 for LangGraph and -0.05 for LCEL sit at
+   or under the 0.06 noise floor. The two axes that clear it are both LangGraph's:
+   grounding +0.12 and citation +0.09. Both are plausibly downstream of the grade
+   step - a model asked "are these excerpts sufficient?" immediately before being
+   asked to answer from them - but a single run cannot distinguish that from
+   judge drift at the floor, and the runs are a week apart (raw and LCEL on
+   2026-08-24, LangGraph on 2026-08-31), so ordinary between-day variance applies.
+4. **LangGraph's gain is on medium, and it loses on hard.** Medium +0.17 and hard
+   -0.16 both clear the noise floor while the overall mean hides them. LCEL loses
+   on hard too (-0.18). The prior expectation was that an agentic loop would earn
+   its cost on the hardest questions; the measurement says the opposite at n=11
+   per difficulty band. Whether the hard-band loss is real or is three questions
+   of judge noise cannot be settled by one run each.
+5. **The loop's cost lands where it can never help.** Scored records cost
+   LangGraph 1.5s more on average than raw; probes cost it 42s more. Out-of-corpus
+   questions are precisely the case where the grader correctly says "insufficient"
+   and the rewrite correctly finds nothing, so every probe pays the full retry -
+   a second 21s-gated Voyage call plus two extra model calls - to arrive at the
+   same refusal. All three arms refuse 5/5.
+
+The token figure is an estimate, not a measurement: cost is not in the result
+CSVs, and the Langfuse read API 404s on the local v4.3.1 build. It is derived
+from the code. `grade_node` sends the full 14-excerpt context to the same
+`claude-sonnet-4-6` as the generator, so a non-looped query pays roughly 2x the
+input tokens of the raw arm and a looped one roughly 3x; across 33 non-looped and
+6 looped records that is ~2.15x. Grader output is one token. The docstring on
+`_grader` already names a cheaper grading model as the obvious optimization -
+this is the number that justifies paying for it.
+
+Latency here measures the Voyage free tier more than it measures architecture.
+At `VOYAGE_MIN_INTERVAL_SEC=21` a second retrieval costs 21s before any model
+call, which is most of the probe gap. The scored-only row is the more honest
+comparison of the pipelines themselves, and it is 1.5s.
+
+LangGraph is the shortest of the three implementations (191 lines against raw's
+205 and LCEL's 255; 140/149/174 excluding blanks and comments) because the graph
+declaration replaces hand-written control flow. That is a real result and it is
+the only dimension on which the agentic arm clearly wins.
+
 ## Resulting production configuration
 
 Baseline, with `TOP_K` raised from 5 to 14 (`ask.py`). Chunking, embedding,
@@ -268,6 +367,12 @@ retrieval and prompt unchanged - Experiment 3 found no strategy change that
 clears the noise floor, so vanilla retrieval stays in production. Measured:
 overall 4.53, completeness 4.24, clause citation 97.1%, probe refusal 5/5,
 false refusal 1/34.
+
+Experiment 4 does not change this either. The raw-API implementation stays in
+production: it is within noise of both alternatives on answer quality, retrieves
+identically, and costs less than half the input tokens of the agentic arm. The
+LangChain and LangGraph pipelines remain in the tree as measured comparisons,
+reachable through `RAG_IMPL`, not as candidates to promote.
 
 ## Defect found and fixed
 
@@ -298,18 +403,26 @@ the fix cannot silently rot.
 
 This measures whether the system answers a small hand-curated set of SQF
 questions usefully and cites the right clause, as judged by a strong LLM plus
-deterministic clause matching. It does not measure: latency, cost, robustness
-to adversarial phrasing, performance on documents outside the indexed set,
-or whether the reference answers themselves are correct readings of the code.
+deterministic clause matching. It does not measure: robustness to adversarial
+phrasing, performance on documents outside the indexed set, or whether the
+reference answers themselves are correct readings of the code.
 The reference answers were written by one person from the documents and have
 not been reviewed by a second practitioner. That is the largest single threat
 to the validity of these numbers.
 
-Two further limits specific to what is reported above. The probe set is n=5, so
+Three further limits specific to what is reported above. The probe set is n=5, so
 the refusal rate moves in 20-point steps and cannot separate configurations at
 this size - it is a smoke test, not an assurance figure. And `clause_hit@k` is
 only comparable between configurations that chunk the same way; use the
 answer-cites-expected-clause metric for anything else.
+
+Experiment 4's latency and cost figures carry weaker warrants than the quality
+ones. Latency is wall clock under a 21s-per-call rate limiter, so it reports the
+Voyage free tier at least as much as the pipelines; the scored-only row is the
+usable comparison and an unpaced re-run would be the honest one. Cost is not
+measured at all - it is estimated from the call graph, because the result CSVs
+carry no token counts and the local Langfuse build's read API is unavailable.
+Recording per-run token usage in the CSV would turn that estimate into a number.
 
 ## What I'd do next
 
@@ -328,3 +441,12 @@ answer-cites-expected-clause metric for anything else.
    all 105 DOCX chunks carry `page=None` and their citations show source and
    clause but no page. The fix is upstream in ingest (render to PDF first), not
    in chunking
+6. Record token usage per record in the result CSV, so cost stops being an
+   estimate derived from the call graph (Experiment 4)
+7. Skip the grade-and-rewrite loop when the grader's verdict cannot change the
+   outcome. LangGraph's loop fired on 6 of 39 records, 5 of them probes, where
+   the retry costs ~42s and a second full-context grading call to reach the same
+   refusal the other two arms reach immediately. Grading against a cheaper model,
+   or on the question alone rather than the full 14-excerpt context, would cut
+   most of the ~2.15x token estimate without touching the mechanism that won
+   `corrective-action-m1`
