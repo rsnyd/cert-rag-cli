@@ -1600,11 +1600,11 @@ Two things this section originally got wrong, both corrected below after the SQF
 
 Three arms, all generated in Colab, all judged locally:
 
-| Arm | What it is |
-|---|---|
-| `base` | Stock model, bare prompt |
+| Arm         | What it is                                                    |
+| ----------- | ------------------------------------------------------------- |
+| `base`    | Stock model, bare prompt                                      |
 | `fewshot` | Stock model, measured brand rules + 3 exemplars in the prompt |
-| `ft` | The QLoRA adapter |
+| `ft`      | The QLoRA adapter                                             |
 
 A fine-tune earns its keep only if it beats a good prompt. If `ft` ≈ `fewshot`, the honest finding is that prompting already got you there - the most common real-world result, and the more interesting thing to write about.
 

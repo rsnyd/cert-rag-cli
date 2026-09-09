@@ -25,21 +25,27 @@ Every rule below is a measurement instead.
 import csv
 import json
 import re
+import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 from anthropic import Anthropic
 
-import env  # noqa: F401  - loads .env before ANTHROPIC_API_KEY is read
+# Repo root on the path so `env` resolves by top-level name, same as the
+# evals/ scripts do.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import env  # noqa: E402,F401  - loads .env before ANTHROPIC_API_KEY is read
 
 # Not imported from ask.py on purpose: ask.py picks a retrieval strategy at
 # import time and opens Chroma, which this has no use for.
 JUDGE_MODEL = "claude-sonnet-4-6"
 
-OUTPUTS = Path("finetune/outputs.json")
-CORPUS = Path("finetune/brand_voice.jsonl")
-RESULTS_DIR = Path("finetune/results")
+_HERE = Path(__file__).resolve().parent
+OUTPUTS = _HERE / "outputs.json"
+CORPUS = _HERE / "brand_voice.jsonl"
+RESULTS_DIR = _HERE / "results"
 
 ARMS = ("base", "fewshot", "ft")
 

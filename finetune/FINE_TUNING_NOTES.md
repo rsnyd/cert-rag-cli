@@ -1,7 +1,27 @@
 # Fine-Tuning Notes: Brand-Voice LoRA
 
-Week 6 of the Weeks 5-6 walkthrough. Sections for Days 11-13 get filled in as
-those days happen; what follows is settled through Day 9.
+Training a small open-weights model to write Spices, Inc. product descriptions
+in the house voice from bare product facts — and measuring honestly whether it
+was worth doing.
+
+**Adapter:** `huggingface.co/rsnyd/spice-voice-lora`
+**Base:** Llama 3.1 8B Instruct, 4-bit, QLoRA (`r=16`) via Unsloth
+**Data:** 439 published catalog descriptions, human-written
+**Training:** 2 epochs / 110 steps, ~35 min on one free Colab T4
+
+| arm | voice (1-5) | structure (1-5) | fabricated names |
+|---|---|---|---|
+| base model, bare prompt | 1.53 | 1.27 | 0.00 |
+| base model, 3 few-shot | 1.87 | 2.33 | 1.00 |
+| **fine-tuned** | **3.07** | **4.20** | **1.87** |
+
+**The finding in one line:** the adapter beat a good prompt on voice and
+structure by a wide margin, and fabricated more product names and recipes with
+every point of fluency it gained. It learned the house format completely and
+learned nothing true. Voice is a fine-tuning problem; the catalog is a
+retrieval problem; shipping this would require both.
+
+Sections below run in the order the work happened.
 
 ## Why the fine-tune target is brand voice and not the SQF corpus
 
@@ -233,13 +253,89 @@ The honest comparison Day 12 exists for: how much of the gain would a good
 system prompt plus three few-shot examples have gotten on its own? Run that arm
 before concluding the LoRA was necessary.
 
+### Results: three arms, 15 products
+
+`finetune/results/voice_20260909_154636.csv`. Judge is Claude via a forced tool
+call, rubric measured from the corpus (see `eval_voice.py` for why the
+walkthrough's template rubric was thrown out). Voice and structure are 1-5;
+filler and fabricated are counts per description.
+
+| arm | voice | structure | filler | fabricated | words |
+|---|---|---|---|---|---|
+| base (bare prompt) | 1.53 | 1.27 | 2.87 | 0.00 | 67 |
+| base + 3 few-shot | 1.87 | 2.33 | 0.53 | 1.00 | 106 |
+| **fine-tuned** | **3.07** | **4.20** | 1.87 | 1.87 | 235 |
+
+**The fine-tune beat the prompt by +1.20 on voice and +1.87 on structure.**
+That is a real margin, and it is mostly structure: few-shot prompting got the
+model partway to the section layout (2.33) and the adapter nearly all the way
+(4.20). Length tells the same story — 235 words against the ~293-word house
+average, where prompting reached only 106.
+
+So on this task, prompting did *not* get there on its own. That is the less
+common outcome and worth stating plainly, because the reverse was the expected
+finding.
+
+**The fabrication column runs the other way, and it is the more important
+result.** Invented names rise monotonically with fluency: 0.00 for the base
+model, 1.00 with few-shot, 1.87 for the adapter. The base model scores zero not
+because it is careful but because it writes nothing specific enough to be
+wrong — it produces "perfect for any occasion" (2.87 filler phrases per
+description) and never names a product or a recipe. Every gain in voice bought
+a matching gain in confident falsehood:
+
+    Vegetable Soup Base        Vietnamese Grilled Pork Skewers
+    Organic Vermont Maple Sugar   Vietnamese Seasoning
+    Grilled Portobello Mushrooms  Roasted Broccoli
+
+None of those exist. **Fluency is not grounding, and this is what that looks
+like when you measure it.**
+
+### Caveat: the eval set was not properly held out
+
+The 15 products scored here came from the *old* train/test split, which had
+been superseded before training (see `build_dataset.py`, `SEED`). They are all
+present in the current `train.jsonl`, so this is not a clean held-out
+evaluation and the numbers above are reported with that qualification.
+
+Checked for memorization before trusting them: similarity between generated and
+published copy is 0.075 mean and 0.157 max for the fine-tuned arm, against
+0.026 for the base model. The single closest case diverges immediately after a
+formulaic opening clause. Two epochs at `r=16` learned the template, not the
+text, so the structure and voice scores measure generalization rather than
+recall — but a clean re-run on the current `test.jsonl` is the honest fix, and
+it costs 15 minutes of Colab.
+
+The leak itself is worth recording: the split was regenerated locally after the
+files had already been uploaded to Drive, and nothing in the pipeline noticed,
+because a 439-record `train.jsonl` and a 15-record `test.jsonl` look correct
+whichever split produced them. Version the split, or verify it at eval time.
+
 ## Day 13: conclusions
 
-_To fill in after the training run._
+**Fine-tune vs. prompt.** On brand voice, the LoRA won by a clear margin
+(+1.20 voice, +1.87 structure over a three-shot prompt) and the gap is
+concentrated in structure — reproducing a five-section house template that
+few-shot prompting only gestured at. If the requirement is one description in
+the house format, prompting is cheaper. If it is a thousand of them with the
+format holding every time, the adapter earns its cost.
 
-- [ ] Fine-tuned vs base, scored on the 45 held-out records
-- [ ] Fine-tuned vs a strong system prompt on the base model
-- [ ] The fine-tune-vs-prompt recommendation, with numbers behind it
+**Fine-tune vs. RAG.** The adapter cannot be shipped as-is, and no amount of
+additional training would fix it. It invents product cross-sells and recipe
+titles because those are facts, and facts are not what LoRA transfers. A
+production version needs the architecture already built for SQF in this repo:
+retrieval over the real SKU and recipe lists, with the adapter supplying only
+the voice. The two techniques are complements, not alternatives, and the
+measurement above is the argument for saying so to a customer.
+
+**What I would tell a client.** Fine-tune when a format or register has to hold
+across high volume and a prompt describing it would be long and still
+unreliable. Do not fine-tune to teach the model what is true. If someone asks
+for a fine-tune to make a model "know our products," the fabrication column is
+the exhibit.
+
+**Cost.** One free Colab T4, ~35 minutes of training on 439 examples, a ~100MB
+adapter. The judging run cost more in API calls than the training did.
 
 ## Housekeeping
 
