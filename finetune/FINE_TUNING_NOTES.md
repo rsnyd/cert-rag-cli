@@ -5,7 +5,7 @@ in the house voice from bare product facts — and measuring honestly whether it
 was worth doing.
 
 **Adapter:** `huggingface.co/rsnyd/spice-voice-lora`
-**Base:** Llama 3.1 8B Instruct, 4-bit, QLoRA (`r=16`) via Unsloth
+**Base:** Llama 3.1 8B (base, not Instruct), 4-bit, QLoRA (`r=16`) via Unsloth
 **Data:** 439 published catalog descriptions, human-written
 **Training:** 2 epochs / 110 steps, ~35 min on one free Colab T4
 
@@ -129,7 +129,7 @@ LoRA config is unchanged (`r=16`, `alpha=16`, `dropout=0`, all seven projection
 modules). The walkthrough's overfitting caution at `r=16` was aimed at a
 150-example set; 439 has more room.
 
-### Baseline: base Llama 3.1 8B before training
+### Baseline: stock Llama 3.1 8B before training
 
 Captured 2026-09-08 on a held-out product, prompted with the same Alpaca
 template used for training (`Name: Satay Seasoning / Category: Seasoning

@@ -1,5 +1,5 @@
 ---
-base_model: unsloth/Meta-Llama-3.1-8B-Instruct
+base_model: unsloth/llama-3.1-8b-unsloth-bnb-4bit
 library_name: peft
 tags:
   - lora
@@ -77,7 +77,7 @@ qualification.
 
 | | |
 |---|---|
-| Base | `unsloth/Meta-Llama-3.1-8B-Instruct`, 4-bit |
+| Base | `unsloth/llama-3.1-8b-unsloth-bnb-4bit` (base, not Instruct) |
 | Method | QLoRA, `r=16`, `alpha=16`, dropout 0 |
 | Target modules | q, k, v, o, gate, up, down |
 | Data | 439 published product descriptions |
