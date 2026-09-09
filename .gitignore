@@ -5,3 +5,4 @@ __pycache__/
 data/
 evals/results/*.csv
 evals/results/*.html
+*:Zone.Identifier
