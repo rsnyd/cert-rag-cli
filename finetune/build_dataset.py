@@ -30,10 +30,12 @@ IN_FILE = Path("finetune/brand_voice.jsonl")
 TRAIN_FILE = Path("finetune/train.jsonl")
 TEST_FILE = Path("finetune/test.jsonl")
 
-# 10% held out. The walkthrough says 15 records, sized for a 150-example set;
-# at 454 that would be 3%, too few for Day 12 to distinguish a real voice gain
-# from noise across five judged product categories.
-TEST_SIZE = 45
+# The walkthrough's number, kept. 15 of 454 is a 3% holdout, which is thin -
+# 45 would give Day 12 more to stand on. But the committed split is 439/15 and
+# a resplit after training would put ~30 records the model had trained on into
+# the test set, inflating every Day 12 number with nothing visibly wrong. The
+# split matching the data matters more than the split being the ideal size.
+TEST_SIZE = 15
 
 SEED = 20260903  # never change: Day 12's eval is only honest against Day 11's split
 
