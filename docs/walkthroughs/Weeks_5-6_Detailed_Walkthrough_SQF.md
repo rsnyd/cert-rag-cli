@@ -9,6 +9,7 @@ one small LoRA adapter on your own brand-voice data.**
 Weeks 5-6 are "now learn the tools the industry actually uses, with the
 understanding you earned." You'll see exactly what LangChain automates and exactly
 what it costs you. That contrast - "I can do it both ways and here's the tradeoff"
+
 - is one of the strongest things you can say in an SA interview.
 
 ---
@@ -633,8 +634,7 @@ You wrote zero streaming code, but `.stream()` works because every component in
 the chain is a `Runnable`. That's the LCEL value proposition in one line.
 
 Streaming the *generation* sub-chain rather than `build_rag_chain()` is
-deliberate. The full chain's output is a dict (`{question, chunks, user_message,
-answer}`), so streaming it yields dict deltas rather than answer tokens - and its
+deliberate. The full chain's output is a dict (`{question, chunks, user_message, answer}`), so streaming it yields dict deltas rather than answer tokens - and its
 first step is a retrieval that has to complete before any token can exist
 anyway. Retrieve first, then stream the part that has something to stream.
 
@@ -1079,18 +1079,18 @@ Now you have three eval CSVs. Compare scores, but more importantly compare these
 dimensions in a table for your writeup. For this corpus the rows that matter most
 are the compliance metrics, so lead with them:
 
-| Dimension | Raw API | LCEL | LangGraph |
-|-----------|---------|------|-----------|
-| clause hit@3 | (yours) | ~same | same-or-better (retries retrieval) |
-| Probe refusal rate | (yours) | ~same | same (rewrite still finds nothing) |
-| False refusal rate | (yours) | ~same | lower (retries before giving up) |
-| Citation correctness | (yours) | ~same | ~same |
-| Overall (5-axis) | (yours) | ~same | better on hard questions |
-| Lines of code | ~205 | ~255 | ~190 |
-| Avg latency per query | (Langfuse) | ... | higher (extra grade/rewrite calls) |
-| Avg cost per query | ... | ... | higher (extra calls) |
-| Debuggability | high (all yours) | medium | medium |
-| Setup complexity | low | medium | medium-high |
+| Dimension             | Raw API          | LCEL   | LangGraph                          |
+| --------------------- | ---------------- | ------ | ---------------------------------- |
+| clause hit@3          | (yours)          | ~same  | same-or-better (retries retrieval) |
+| Probe refusal rate    | (yours)          | ~same  | same (rewrite still finds nothing) |
+| False refusal rate    | (yours)          | ~same  | lower (retries before giving up)   |
+| Citation correctness  | (yours)          | ~same  | ~same                              |
+| Overall (5-axis)      | (yours)          | ~same  | better on hard questions           |
+| Lines of code         | ~205             | ~255   | ~190                               |
+| Avg latency per query | (Langfuse)       | ...    | higher (extra grade/rewrite calls) |
+| Avg cost per query    | ...              | ...    | higher (extra calls)               |
+| Debuggability         | high (all yours) | medium | medium                             |
+| Setup complexity      | low              | medium | medium-high                        |
 
 Be honest about the lines-of-code row: on this corpus LCEL came out *longer* than
 the raw API, not shorter. Two of this repo's constraints ate the savings. Voyage's
@@ -1320,7 +1320,7 @@ git push
 - [ ] All three implementations evaluated on the same golden set, including citation and refusal metrics
 - [ ] `FRAMEWORKS.md` comparison written, compliance metrics first
 - [ ] `serve.py` answers over HTTP with deduped clause citations, and the CLI and
-      the service share one code path
+  the service share one code path
 - [ ] You can write a basic LCEL chain (`prompt | model | parser`) from memory
 - [ ] You can explain when to use LCEL vs LangGraph in one sentence
 - [ ] You can explain `RunnableParallel` + `RunnablePassthrough` in the RAG pattern
@@ -1352,9 +1352,7 @@ Crucial framing for interviews: **fine-tuning teaches behavior, not facts.** It 
 Three techniques, increasing accessibility:
 
 - **Full fine-tuning**: update every weight. Best results, but a 7B model needs ~84GB of GPU memory across multiple high-end GPUs. Also "destructive" - can cause catastrophic forgetting of the model's general skills. Almost never the right recommendation for an applied team.
-
 - **LoRA (Low-Rank Adaptation)**: freeze the base model, train small adapter matrices (typically less than 1% of total parameters) injected at each targeted layer. Drastically less memory and time. The adapter is a tiny file (~100MB) you load alongside the base model. This is the default modern choice.
-
 - **QLoRA (Quantized LoRA)**: LoRA on top of a base model compressed to 4-bit. Cuts memory further - a 7-8B model fine-tunes on a single 16GB GPU, which means the free Colab T4. The quality gap versus full fine-tuning is typically 1-2%, a negligible tradeoff for a 10x hardware reduction.
 
 You'll use QLoRA because it runs on free hardware. Know all three names and the memory story for interviews.
@@ -1592,91 +1590,120 @@ Did it actually work, or does it just feel like it worked? Measure it the way yo
 
 You can't use exact-match - there's no single right description. Use the same LLM-as-judge muscle from Week 3, but score on brand-voice adherence instead of factual correctness.
 
+Two things this section originally got wrong, both corrected below after the SQF run:
+
+**The rubric has to come from your corpus, not from a template.** The placeholder brand rules this walkthrough used to ship forbade "gourmet" (used 43 times in the real 454-description catalog), forbade em dashes (57 of them), preferred five phrases that appear zero times, and preferred "building" over "bold" for heat when the corpus uses bold 67 times and building 3. Judging a fine-tune against invented rules scores the human-written source material as off-brand. Measure the rules first.
+
+**Two arms is not enough.** Base vs. fine-tuned flatters the fine-tune and answers nothing a customer cares about. Run three.
+
 ### Project: Brand-voice judge
 
-Create `finetune/eval_voice.py` (runs locally, calls Claude as judge - the model under test ran in Colab):
+Three arms, all generated in Colab, all judged locally:
 
-```python
-"""Day 12: Judge brand-voice adherence of fine-tuned vs base outputs."""
-import json
-from pathlib import Path
-from anthropic import Anthropic
+| Arm | What it is |
+|---|---|
+| `base` | Stock model, bare prompt |
+| `fewshot` | Stock model, measured brand rules + 3 exemplars in the prompt |
+| `ft` | The QLoRA adapter |
 
-client = Anthropic()
+A fine-tune earns its keep only if it beats a good prompt. If `ft` ≈ `fewshot`, the honest finding is that prompting already got you there - the most common real-world result, and the more interesting thing to write about.
 
-BRAND_RULES = """Spices Inc brand voice:
-- Warm, expert, never patronizing
-- Concrete before evocative (origin, technique, use before mood)
-- Forbidden words: elevate, premium, artisanal, gourmet, curated, luxurious, decadent
-- Preferred: well-made, carefully sourced, small batch, honest, fresh-ground
-- Plain hyphens, never em dashes
-- Specific about heat (mild, building, sharp), not vague (bold, powerful)"""
+**Where each piece runs.** The models run in Colab, because that is where the GPU is. The judge runs locally from the repo root, because that is where your Anthropic key and your catalog are. The handoff between them is one JSON file.
 
-JUDGE_TOOL = {
-    "name": "score_voice",
-    "description": "Score how well a product description matches the brand voice.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "reasoning": {"type": "string"},
-            "voice_adherence": {"type": "integer", "minimum": 1, "maximum": 5},
-            "uses_forbidden_words": {"type": "boolean"},
-        },
-        "required": ["reasoning", "voice_adherence", "uses_forbidden_words"],
-    },
-}
+#### Step 1 (Colab): derive the brand rules from the corpus
 
+Before writing any rubric, measure. Locally:
 
-def score(description: str) -> dict:
-    resp = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=512,
-        system=f"You score product descriptions for brand-voice adherence.\n\n{BRAND_RULES}",
-        tools=[JUDGE_TOOL],
-        tool_choice={"type": "tool", "name": "score_voice"},
-        messages=[{"role": "user", "content": f"Score this description:\n\n{description}"}],
-    )
-    for block in resp.content:
-        if block.type == "tool_use":
-            return block.input
-
-
-if __name__ == "__main__":
-    # Load your test set, and the outputs you generated from base + fine-tuned models.
-    # (Generate those outputs in Colab on Day 11 and paste/upload them here as JSON.)
-    base_outputs = json.loads(Path("finetune/base_outputs.json").read_text())
-    ft_outputs = json.loads(Path("finetune/ft_outputs.json").read_text())
-
-    base_scores, ft_scores = [], []
-    for desc in base_outputs:
-        s = score(desc)
-        base_scores.append(s["voice_adherence"])
-    for desc in ft_outputs:
-        s = score(desc)
-        ft_scores.append(s["voice_adherence"])
-
-    print(f"Base model voice adherence:       {sum(base_scores)/len(base_scores):.2f}")
-    print(f"Fine-tuned model voice adherence: {sum(ft_scores)/len(ft_scores):.2f}")
-    print(f"Delta: {(sum(ft_scores)/len(ft_scores)) - (sum(base_scores)/len(base_scores)):+.2f}")
+```bash
+uv run python -c "
+import json, re
+recs = [json.loads(l) for l in open('finetune/brand_voice.jsonl')]
+outs = [r['output'] for r in recs]; blob = '\n'.join(outs); n = len(recs)
+print('avg words:', sum(len(o.split()) for o in outs)//n)
+for pat in ['Flavor Profile', 'How To Use|How to Use', 'also known as', 'is popular with']:
+    print(pat, f'{sum(1 for o in outs if re.search(pat, o))/n:.0%}')
+"
 ```
 
-To use it: on Day 11 in Colab, run your 15 test-set inputs through both the base model and the fine-tuned model, save the two lists of outputs as JSON, download them, and run this judge locally.
+Whatever comes back is your rubric. For the SQF run: 96% carry a Flavor Profile section, 96% a How To Use section, 82% open with the product name, ~293 words, almost no exclamation marks.
 
-The expected result: the fine-tuned model scores meaningfully higher on voice adherence and uses fewer forbidden words. If the delta is small or zero, the honest conclusions are usually one of: dataset too small, too few training steps, or - importantly - **prompting alone might have gotten you there**, which is itself the most common real-world finding and a great thing to write about.
+#### Step 2 (Colab): generate all three arms
+
+Load the pushed adapter once and toggle it off for the base arms, so every arm comes from identical weights:
+
+```python
+import json
+D = "/content/drive/MyDrive/spice-voice"
+test  = [json.loads(l) for l in open(f"{D}/test.jsonl")]
+train = [json.loads(l) for l in open(f"{D}/train.jsonl")]
+shots = sorted(train, key=lambda r: len(r["output"]))[:3]   # shortest 3, to fit context
+
+FastLanguageModel.for_inference(model)
+
+def gen(text, n=600):
+    ins = tokenizer([text], return_tensors="pt").to("cuda")
+    out = model.generate(**ins, max_new_tokens=n, use_cache=True)
+    s = tokenizer.batch_decode(out)[0].split("### Response:")[-1]
+    return s.replace("<|end_of_text|>", "").replace("<|begin_of_text|>", "").strip()
+
+bare    = lambda r: alpaca_prompt.format(r["instruction"], r["input"], "")
+fewshot = lambda r: "\n\n".join(
+    [alpaca_prompt.format(s["instruction"], s["input"], s["output"]) for s in shots] + [bare(r)])
+
+res = {"names": [r["input"].splitlines()[0].replace("Name: ", "") for r in test]}
+res["base"], res["fewshot"], res["ft"] = [], [], []
+
+with model.disable_adapter():          # arms 1 and 2 - base weights
+    for r in test:
+        res["base"].append(gen(bare(r)))
+        res["fewshot"].append(gen(fewshot(r)))
+
+for r in test:                          # arm 3 - adapter on
+    res["ft"].append(gen(bare(r)))
+
+json.dump(res, open(f"{D}/outputs.json", "w"), indent=2)
+```
+
+Roughly 15 minutes for 45 generations. Writing to Drive rather than local Colab storage means an expired session costs nothing.
+
+#### Step 3 (local): download and judge
+
+Download `outputs.json` from Drive into `finetune/`, then:
+
+```bash
+uv run python finetune/eval_voice.py
+```
+
+See `finetune/eval_voice.py` for the full judge. Its shape:
+
+- **Judge scores** from Claude via a forced tool call - `voice_adherence` and `structure_adherence` on 1-5, plus verbatim `filler_phrases` it caught.
+- **Deterministic checks** with no API cost - word count, section presence.
+- **A fabrication check**, which is the part the original walkthrough had no notion of and which turned out to matter most.
+
+#### Step 4 (local): count the fabrications
+
+A style fine-tune learns the *shape* of a section, not the facts inside it. In the SQF run the adapter reproduced the "How To Use" section perfectly and filled it with recipes that do not exist, plus a cross-sell to two products the company does not sell. That is not a bug to fix by training longer; it is the structural limit of the technique.
+
+So grep every output for multi-word proper nouns and check them against the real catalog. Two rules, because the stakes differ:
+
+- A name asserted in a cross-sell ("we also have X") must match a SKU **exactly**. "Thai Seasoning" is a fabrication even though "Spicy Thai Seasoning" exists - a customer clicking it finds nothing.
+- Any other proper noun is flagged if it appears in no real description **and** introduces a word no SKU uses.
+
+Measured on the SQF corpus that catches 4 of 5 known fabrications at an 11% false-positive rate on real copy. It is triage for a human, not a score - read the column, don't just sum it.
 
 ### The honest finding is the valuable finding
 
-Whatever the delta, the writeup conclusion that demonstrates senior judgment is some version of:
+Whatever the deltas, the conclusion that demonstrates senior judgment is some version of:
 
-> Fine-tuning moved brand-voice adherence from X to Y on a 150-example dataset. For comparison, a well-crafted system prompt with 3 few-shot examples achieved Z. The fine-tune is worth it when [voice consistency at scale matters / the prompt would otherwise be very long]; otherwise prompting is cheaper and easier to iterate.
+> Fine-tuning moved voice adherence from X to Y on a 439-example dataset. A well-crafted prompt with 3 few-shot examples reached Z. The fine-tune is worth it when [voice consistency at scale matters / the prompt would otherwise be very long]; otherwise prompting is cheaper and easier to iterate. Neither arm fixes fabricated product names - that needs retrieval over the real catalog, with the adapter supplying only the voice.
 
-That comparison - fine-tune vs good prompting - is exactly the analysis a customer needs and most candidates never do.
+That last sentence is the one most candidates never get to, because they never check.
 
 Commit:
 
 ```bash
-git add finetune/eval_voice.py
-git commit -m "Day 12 (wk6): brand-voice judge, fine-tuned vs base comparison"
+git add finetune/eval_voice.py finetune/results/
+git commit -m "Day 12 (wk6): brand-voice judge, three-arm comparison"
 ```
 
 ---
