@@ -174,6 +174,44 @@ def fabrications(text: str, names: set[str], corpus_text: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def _product_names(path: Path) -> set[str]:
+    return {
+        json.loads(line)["input"].splitlines()[0].replace("Name:", "").strip()
+        for line in path.open(encoding="utf-8")
+    }
+
+
+def assert_held_out(products: list[str]) -> None:
+    """Refuse to score products the model was trained on.
+
+    This exists because it already happened. The split was regenerated locally
+    after train.jsonl and test.jsonl had been uploaded to Colab, so the eval
+    ran against a superseded test set whose 15 products were all in the current
+    training data. Nothing caught it: a 439-record train file and a 15-record
+    test file look correct whichever split produced them, and the resulting
+    scores looked plausible.
+
+    A contaminated eval is worse than no eval, because it reports a number.
+    """
+    train, test = _product_names(_HERE / "train.jsonl"), _product_names(_HERE / "test.jsonl")
+    seen = sorted(set(products) & train)
+    missing = sorted(set(products) - test)
+
+    if seen:
+        raise SystemExit(
+            f"TRAIN/TEST LEAK: {len(seen)} of {len(products)} scored products are in "
+            f"train.jsonl.\n  {', '.join(seen[:6])}{' ...' if len(seen) > 6 else ''}\n\n"
+            "outputs.json was generated from a different split than the one on disk.\n"
+            "Upload the current finetune/test.jsonl to Drive, regenerate, and retry."
+        )
+    if missing:
+        raise SystemExit(
+            f"{len(missing)} scored products are not in test.jsonl: "
+            f"{', '.join(missing[:6])}{' ...' if len(missing) > 6 else ''}\n"
+            "outputs.json and the local split disagree."
+        )
+
+
 def score(client: Anthropic, description: str) -> dict:
     resp = client.messages.create(
         model=JUDGE_MODEL,
@@ -199,6 +237,7 @@ def main() -> None:
     data = json.loads(OUTPUTS.read_text(encoding="utf-8"))
     names, corpus_text = load_corpus()
     products = data["names"]
+    assert_held_out(products)
     client = Anthropic()
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
