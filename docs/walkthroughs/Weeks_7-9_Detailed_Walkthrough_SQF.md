@@ -965,15 +965,15 @@ You now have the agent three ways: raw SDK, LangGraph (prebuilt + custom), CrewA
 
 Adapt your Week 7 `agent_eval.py` to also run the LangGraph version. Compare outcome scores, but more importantly build the comparison table for your writeup:
 
-| Dimension | Raw SDK | LangGraph | CrewAI |
-|-----------|---------|-----------|--------|
-| Lines of code | ~120 | ~40 (prebuilt) / ~80 (custom) | ~40 |
-| Control over flow | total | high | medium |
-| Built-in tool loop | no (you wrote it) | yes | yes |
-| Custom guardrail node | manual | clean (graph node) | awkward |
-| Multi-agent native | no | possible | yes (core) |
-| Debuggability | high | medium | lower |
-| Best for | understanding, perf-critical | production agents | role-based teams |
+| Dimension             | Raw SDK                      | LangGraph                     | CrewAI           |
+| --------------------- | ---------------------------- | ----------------------------- | ---------------- |
+| Lines of code         | ~120                         | ~40 (prebuilt) / ~80 (custom) | ~40              |
+| Control over flow     | total                        | high                          | medium           |
+| Built-in tool loop    | no (you wrote it)            | yes                           | yes              |
+| Custom guardrail node | manual                       | clean (graph node)            | awkward          |
+| Multi-agent native    | no                           | possible                      | yes (core)       |
+| Debuggability         | high                         | medium                        | lower            |
+| Best for              | understanding, perf-critical | production agents             | role-based teams |
 
 ### The interview insight to internalize
 
